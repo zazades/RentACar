@@ -69,81 +69,160 @@ local SaveManager = {} do
 
 	function SaveManager:SetIgnoreIndexes(list)
 		for _, key in next, list do
-			self.Ignore[key] = true
+	        	self.Ignore[key] = true
 		end
 	end
 
-	function SaveManager:SetFolder(folder)
-		self.Folder = folder;
-		self:BuildFolderTree()
-	end
+    function SaveManager:SetFolder(folder)
+        self.Folder = folder
+        self:BuildFolderTree()
+    end
 
-	function SaveManager:Save(name)
-		if (not name) then
-			return false, "no config file is selected"
-		end
 
-		local fullPath = self.Folder .. "/settings/" .. name .. ".json"
+  function SaveManager:Save(name)
+        if (not name) then
+            return false, "no config file is selected"
+        end
 
-		local data = {
-			objects = {}
-		}
+        local fullPath = self.Folder .. "/settings/" .. name .. ".json"
 
-		for idx, option in next, SaveManager.Options do
-			if not self.Parser[option.Type] then continue end
-			if self.Ignore[idx] then continue end
+        local data = {
+            objects = {}
+        }
 
-			table.insert(data.objects, self.Parser[option.Type].Save(idx, option))
-		end	
+        -- Save positions as part of the configuration
+        for idx, option in next, SaveManager.Options do
+            if not self.Parser[option.Type] then continue end
+            if self.Ignore[idx] then continue end
 
-		local success, encoded = pcall(httpService.JSONEncode, httpService, data)
-		if not success then
-			return false, "failed to encode data"
-		end
+            -- Store the positions for each ball in the config
+            if option.Type == "Position" then
+                table.insert(data.objects, { type = "Position", idx = idx, value = option.Position })
+            else
+                table.insert(data.objects, self.Parser[option.Type].Save(idx, option))
+            end
+        end    
 
-		writefile(fullPath, encoded)
-		return true
-	end
+        local success, encoded = pcall(httpService.JSONEncode, httpService, data)
+        if not success then
+            return false, "failed to encode data"
+        end
 
-	function SaveManager:Load(name)
-		if (not name) then
-			return false, "no config file is selected"
-		end
-		
-		local file = self.Folder .. "/settings/" .. name .. ".json"
-		if not isfile(file) then return false, "invalid file" end
+        writefile(fullPath, encoded)
+        return true
+    end
 
-		local success, decoded = pcall(httpService.JSONDecode, httpService, readfile(file))
-		if not success then return false, "decode error" end
+    function SaveManager:Load(name)
+        if (not name) then
+            return false, "no config file is selected"
+        end
+        
+        local file = self.Folder .. "/settings/" .. name .. ".json"
+        if not isfile(file) then return false, "invalid file" end
 
-		for _, option in next, decoded.objects do
-			if self.Parser[option.type] then
-				task.spawn(function() self.Parser[option.type].Load(option.idx, option) end) -- task.spawn() so the config loading wont get stuck.
-			end
-		end
+        local success, decoded = pcall(httpService.JSONDecode, httpService, readfile(file))
+        if not success then return false, "decode error" end
 
-		return true
-	end
+        for _, option in next, decoded.objects do
+            if option.type == "Position" then
+                -- Handle positions (loading)
+                -- Store the loaded positions in the table and place a ball at the position
+                local position = Vector3.fromArray(option.value)
+                table.insert(Points, position)
+                createBallAtPosition(position)  -- This will create the ball at each loaded position
+            elseif self.Parser[option.type] then
+                task.spawn(function() 
+                    self.Parser[option.type].Load(option.idx, option) 
+                end)
+            end
+        end
 
-	function SaveManager:IgnoreThemeSettings()
-		self:SetIgnoreIndexes({ 
-			"InterfaceTheme", "AcrylicToggle", "TransparentToggle", "MenuKeybind"
-		})
-	end
+        return true
+    end
 
-	function SaveManager:BuildFolderTree()
-		local paths = {
-			self.Folder,
-			self.Folder .. "/settings"
-		}
 
-		for i = 1, #paths do
-			local str = paths[i]
-			if not isfolder(str) then
-				makefolder(str)
-			end
-		end
-	end
+    function SaveManager:DeleteConfig(name)
+        local file = self.Folder .. "/settings/" .. name .. ".json"
+        if isfile(file) then
+            delfile(file)
+            return true
+        end
+        return false
+    end
+
+    function SaveManager:BuildFolderTree()
+        local paths = {
+            self.Folder,
+            self.Folder .. "/settings"
+        }
+
+        for i = 1, #paths do
+            local str = paths[i]
+            if not isfolder(str) then
+                makefolder(str)
+            end
+        end
+    end
+
+    function SaveManager:SetLibrary(library)
+        self.Library = library
+        self.Options = library.Options
+    end
+
+    SaveManager:BuildFolderTree()
+end
+local Points = {}  -- Table to store points
+local BallObjects = {}  -- Table to store the ball objects created
+
+local function createBallAtPosition(position)
+    local ball = Instance.new("Part")
+    ball.Shape = Enum.PartType.Ball
+    ball.Size = Vector3.new(1, 1, 1)
+    ball.Position = position
+    ball.Anchored = true
+    ball.CanCollide = false
+    ball.BrickColor = BrickColor.Green()  -- Green color for the sphere
+    ball.Parent = game.Workspace
+    table.insert(BallObjects, ball)  -- Save the ball in the table for later reference
+end
+
+local function addPoint()
+    local player = game.Players.LocalPlayer
+    if player and player.Character then
+        local position = player.Character.HumanoidRootPart.Position
+        table.insert(Points, position)  -- Add position to the Points table
+        print("Point added:", position)
+        createBallAtPosition(position)  -- Create a ball at the added point
+    end
+end
+
+-- UI Button Callback to Save Config
+Tabs.Main:AddButton({
+    Title = "Save Config",
+    Description = "Saves the points to a config file",
+    Callback = function()
+        SaveManager:Save("myConfig")  -- Save the config under a name
+    end
+})
+
+-- UI Button Callback to Load Config
+Tabs.Main:AddButton({
+    Title = "Load Config",
+    Description = "Loads the saved points from a config",
+    Callback = function()
+        SaveManager:Load("myConfig")  -- Load the config by name
+    end
+})
+
+-- UI Button Callback to Delete Config
+Tabs.Main:AddButton({
+    Title = "Delete Config",
+    Description = "Deletes the saved config",
+    Callback = function()
+        SaveManager:DeleteConfig("myConfig")  -- Delete the config by name
+    end
+})
+
 
 	function SaveManager:RefreshConfigList()
 		local list = listfiles(self.Folder .. "/settings")
