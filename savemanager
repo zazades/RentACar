@@ -26,24 +26,18 @@ local SaveManager = {} do
         },
         Dropdown = {
             Save = function(idx, object)
-                -- Save the dropdown's values and selected value
                 return {
                     type = "Dropdown",
                     idx = idx,
-                    value = object.Value,  -- Store the currently selected value
-                    values = object.Values,  -- Store the available values in the dropdown
-                    multi = object.Multi,  -- Store if it's a multi-select dropdown
+                    value = object.Value,
+                    values = object.Values,
+                    multi = object.Multi,
                 }
             end,
             Load = function(idx, data)
-                -- Load the dropdown values and selected value
                 if SaveManager.Options[idx] then
                     local dropdown = SaveManager.Options[idx]
-                    
-                    -- Set the available values for the dropdown
                     dropdown:SetValues(data.values)
-                    
-                    -- Set the selected value from the saved data
                     dropdown:SetValue(data.value)
                 end
             end,
@@ -78,6 +72,22 @@ local SaveManager = {} do
                 end
             end,
         },
+        -- Added position parser to save/load positions
+        Position = {
+            Save = function(idx, object)
+                return { type = "Position", idx = idx, position = object.CFrame.Position }
+            end,
+            Load = function(idx, data)
+                if SaveManager.Options[idx] then
+                    -- Create a new part at the saved position
+                    local part = Instance.new("Part", workspace)
+                    part.CFrame = CFrame.new(data.position)
+                    part.Anchored = true
+                    part.CanCollide = false
+                    part.Size = Vector3.new(2, 2, 2)
+                end
+            end,
+        },
     }
 
     function SaveManager:SetIgnoreIndexes(list)
@@ -87,7 +97,7 @@ local SaveManager = {} do
     end
 
     function SaveManager:SetFolder(folder)
-        self.Folder = folder;
+        self.Folder = folder
         self:BuildFolderTree()
     end
 
@@ -102,6 +112,7 @@ local SaveManager = {} do
             objects = {}
         }
 
+        -- Save positions (CFrames) and other properties
         for idx, option in next, SaveManager.Options do
             if not self.Parser[option.Type] then continue end
             if self.Ignore[idx] then continue end
@@ -131,7 +142,7 @@ local SaveManager = {} do
 
         for _, option in next, decoded.objects do
             if self.Parser[option.type] then
-                task.spawn(function() self.Parser[option.type].Load(option.idx, option) end) -- task.spawn() so the config loading wont get stuck.
+                task.spawn(function() self.Parser[option.type].Load(option.idx, option) end)
             end
         end
 
@@ -219,7 +230,7 @@ local SaveManager = {} do
 
         local section = tab:AddSection("Configuration")
 
-        section:AddInput("SaveManager_ConfigName",    { Title = "Config name" })
+        section:AddInput("SaveManager_ConfigName", { Title = "Config name" })
         section:AddDropdown("SaveManager_ConfigList", { Title = "Config list", Values = self:RefreshConfigList(), AllowNull = true })
 
         section:AddButton({
