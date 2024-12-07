@@ -137,6 +137,8 @@ local SaveManager = {} do
         local file = self.Folder .. "/settings/" .. name .. ".json"
         if not isfile(file) then return false, "invalid file" end
 
+        local jsonData = readfile(file)
+
         local success, decoded = pcall(httpService.JSONDecode, httpService, readfile(file))
         if not success then return false, "decode error" end
 
