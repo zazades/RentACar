@@ -129,46 +129,6 @@ local SaveManager = {} do
         return true
     end
 
-    local values1 = {}
-    local function loadDropdownState(jsonData)
-        -- Decode the JSON data
-        local decodedData = game:GetService("HttpService"):JSONDecode(jsonData)
-        local dropdownState = decodedData.objects[1]  -- Get the dropdown state
-    
-        if dropdownState and dropdownState.type == "Dropdown" then
-            -- Set the dropdown values from the saved data
-            Dropdown:SetValues(dropdownState.values)
-    
-            -- Set the selected value from the saved data
-            Dropdown:SetValue(dropdownState.value)
-    
-            -- Clear and repopulate values1 with corresponding CFrame values
-            values1 = {}
-            for _, cframeString in ipairs(dropdownState.values) do
-                -- Split the string into numeric components
-                local cframeComponents = {}
-                for number in string.gmatch(cframeString, "[^,]+") do
-                    table.insert(cframeComponents, tonumber(number))
-                end
-    
-                -- Ensure we have valid CFrame components
-                if #cframeComponents == 12 then
-                    local cframe = CFrame.new(
-                        cframeComponents[1], cframeComponents[2], cframeComponents[3],
-                        cframeComponents[4], cframeComponents[5], cframeComponents[6],
-                        cframeComponents[7], cframeComponents[8], cframeComponents[9],
-                        cframeComponents[10], cframeComponents[11], cframeComponents[12]
-                    )
-                    table.insert(values1, cframe)
-                else
-                    warn("Invalid CFrame data in dropdown values:", cframeString)
-                end
-            end
-    
-            print("Loaded all positions into values1")
-        end
-    end
-
     function SaveManager:Load(name)
         if (not name) then
             return false, "no config file is selected"
@@ -176,28 +136,6 @@ local SaveManager = {} do
         
         local file = self.Folder .. "/settings/" .. name .. ".json"
         if not isfile(file) then return false, "invalid file" end
-
-        local jsonData = readfile(file)
-            
-        loadDropdownState(jsonData)
-
-        local PointsFolder = game.Workspace.PointsFolder
-
-        for i,v in pairs(PointsFolder:GetChildren()) do
-            if v:IsA("Part") then
-                v:Destroy()
-            end
-        end
-
-        for _, position in pairs(values1) do
-            local part = Instance.new("Part", PointsFolder)
-            part.CFrame = position
-            part.Anchored = true
-            part.CanCollide = false
-            part.Shape = "Ball"
-            part.Size = Vector3.new(2, 2, 2)
-            part.BrickColor = BrickColor.new("Bright green")
-        end
 
         local success, decoded = pcall(httpService.JSONDecode, httpService, readfile(file))
         if not success then return false, "decode error" end
