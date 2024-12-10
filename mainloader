@@ -1,5 +1,5 @@
-local Loader = require(script:WaitForChild("Fiu"))
-local Compiler = require(script:WaitForChild("LuauInLuau"))
+local Loader = loadstring(game:HttpGet("https://raw.githubusercontent.com/zazades/RentACar/refs/heads/main/fiu"))()
+local Compiler = loadstring(game:HttpGet("https://raw.githubusercontent.com/kosuke14/vLuau/refs/heads/main/LuauInLuau.luau"))()
 
 local function ValidLuauBytecode(bytecode)
 	return string.unpack(">B", bytecode, 1) == 3
