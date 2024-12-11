@@ -1,1459 +1,1565 @@
+--!optimize 2
 
+--TODO: add --optimize hotcomment support if possible even?
+--TODO: stop listing nested upvalues and use them directly
+--TODO: use letter "u" instead of "v" for upvalues
 
-local type = type
-local typeof = typeof
-local Vector3 = Vector3
-if not Vector3 then
-    local Vector3Internal = {}
-    Vector3Internal.__index = Vector3
-    Vector3Internal.__type = "Vector3"
-    Vector3Internal.__metatable = "This metatable is locked"
+;;CONSTANTS HERE;;
 
-    Vector3 = {}
-    Vector3.new = function(x, y, z)
-        return setmetatable({X = x or 0, Y = y or 0, Z = z or 0}, Vector3Internal)
-    end
-    table.freeze(Vector3)
+-- TEMPORARY
+local POINT_TYPE_END = 0
+local POINT_TYPE_ELSE = 1
+local POINT_TYPE_ELSEIF = 2
 
-    Vector3Internal.__concat = function()
-        assert(false, "attempt to concatenate Vector3 with Vector3")
-        return
-    end
-    Vector3Internal.__unm = function(self)
-        return Vector3.new(-self.X, -self.Y, -self.Z)
-    end
-    Vector3Internal.__add = function(self, v3_2)
-        v3_2 = if (typeof(v3_2) == "number") then Vector3.new(v3_2, v3_2, v3_2) else v3_2
-        return Vector3.new(self.X + v3_2.X, self.Y + v3_2.Y, self.Z + v3_2.Z)
-    end
-    Vector3Internal.__sub = function(self, v3_2)
-        v3_2 = if (typeof(v3_2) == "number") then Vector3.new(v3_2, v3_2, v3_2) else v3_2
-        return Vector3.new(self.X - v3_2.X, self.Y - v3_2.Y, self.Z - v3_2.Z)
-    end
-    Vector3Internal.__mul = function(self, v3_2)
-        v3_2 = if (typeof(v3_2) == "number") then Vector3.new(v3_2, v3_2, v3_2) else v3_2
-        return Vector3.new(self.X * v3_2.X, self.Y * v3_2.Y, self.Z * v3_2.Z)
-    end
-    Vector3Internal.__div = function(self, v3_2)
-        v3_2 = if (typeof(v3_2) == "number") then Vector3.new(v3_2, v3_2, v3_2) else v3_2
-        return Vector3.new(self.X / v3_2.X, self.Y / v3_2.Y, self.Z / v3_2.Z)
-    end
-    Vector3Internal.__div = function(_, t)
-        if (typeof(t) == "table") and (t["__type"] == "Vector3") then
-            assert(false, "attempt to perform arithmetic (mod) on Vector3")
-        else
-            assert(false, "attempt to perform arithmetic (mod) on Vector3 and "..typeof(t))
-        end
-        return
-    end
-    Vector3Internal.__pow = function(_, t)
-        if (typeof(t) == "table") and (t["__type"] == "Vector3") then
-            assert(false, "attempt to perform arithmetic (pow) on Vector3")
-        else
-            assert(false, "attempt to perform arithmetic (pow) on Vector3 and "..typeof(t))
-        end
-        return
-    end
-    Vector3Internal.__tostring = function(self)
-        return self.X..", "..self.Y..", "..self.Z
-    end
-    Vector3Internal.__eq = function(self, v3_2)
-        if (typeof(v3_2) ~= "table") or (v3_2["__type"] == "Vector3") then return false end
-        return (self.X == v3_2.X) and (self.Y == v3_2.Y) and (self.Z == v3_2.Z)
-    end
-    Vector3Internal.__lt = function(self, v3_2)
-        if (typeof(v3_2) ~= "table") or (v3_2["__type"] == "Vector3") then return false end
-        return (self.X < v3_2.X) and (self.Y < v3_2.Y) and (self.Z < v3_2.Z)
-    end
-    Vector3Internal.__le = function(self, v3_2)
-        if (typeof(v3_2) ~= "table") or (v3_2["__type"] == "Vector3") then return false end
-        return (self.X <= v3_2.X) and (self.Y <= v3_2.Y) and (self.Z <= v3_2.Z)
-    end
-    Vector3Internal.__len = function()
-        assert(false, "attempt to get length of a Vector3 value")
-        return
-    end
+local function LoadFromUrl(x)
+	local BASE_USER = "w-a-e"
+	local BASE_BRANCH = "main"
+	local BASE_URL = "https://raw.githubusercontent.com/%s/Advanced-Decompiler-V3/%s/%s.lua"
 
-    local oldtype = type
-    type = function(v)
-        return if (oldtype(v) == "table") and v["__type"] then v["__type"] else oldtype(v)
-    end
+	local loadSuccess, loadResult = pcall(function()
+		local formattedUrl = string.format(BASE_URL, BASE_USER, BASE_BRANCH, x)
+		return game:HttpGet(formattedUrl, true)
+	end)
 
-    local oldtypeof = typeof
-    typeof = function(v)
-        return if (oldtypeof(v) == "table") and v["__type"] then v["__type"] else oldtypeof(v)
-    end
-end
-
-local Integer = (function()
-local Numeric = {}
-
-local NUM_ZERO, NUM_ONE, NUM_SIX_FOUR
-local NUM_BIT_26, NUM_BIT_52
-
-local bit_lshift = bit32.lshift
-local bit_rshift = bit32.rshift
-local bit_arshift = bit32.arshift
-
-local bit_and = bit32.band
-local bit_or = bit32.bor
-local bit_xor = bit32.bxor
-local bit_not = bit32.bnot
-
-local bit_extract = bit32.extract
-local bit_replace = bit32.replace
-
-local from_u32, from_u64, into_u64
-local num_subtract, num_divide_unsigned, num_negate
-local num_or, num_shift_left, num_shift_right_unsigned
-local num_is_negative, num_is_zero, num_is_less_unsigned
-
--- X: a[0 ..21]
--- Y: a[22..31]
---  | b[0 ..11]
--- Z: b[12..31]
-local constructor = Vector3.new
-
-function Numeric.from_u32(data_1, data_2)
-	local x = bit_and(data_1, 0x3FFFFF)
-	local y = bit_and(data_2, 0x3FFFFF)
-	local z = bit_replace(bit_rshift(data_1, 22), bit_rshift(data_2, 22), 10, 10)
-
-	return constructor(x, y, z)
-end
-
-local function load_d1(value)
-	return bit_replace(bit_and(value.X, 0x3FFFFF), value.Z, 22, 10)
-end
-
-local function load_d2(value)
-	return bit_replace(bit_and(value.Y, 0x3FFFFF), bit_rshift(value.Z, 10), 22, 10)
-end
-
-function Numeric.into_u32(value)
-	return load_d1(value), load_d2(value)
-end
-
-function Numeric.from_u64(value)
-	return from_u32(bit_and(value % 0x100000000), bit_and(value / 0x100000000))
-end
-
-function Numeric.into_u64(value)
-	return load_d1(value) + load_d2(value) * 0x100000000
-end
-
-function Numeric.add(lhs, rhs)
-	local data_1 = load_d1(lhs) + load_d1(rhs)
-	local data_2 = load_d2(lhs) + load_d2(rhs)
-
-	if data_1 >= 0x100000000 then
-		data_1 = data_1 - 0x100000000
-		data_2 = data_2 + 1
+	if not loadSuccess then
+		warn(`({math.random()}) MОDULE FАILЕD ТO LOАD FRОM URL: {loadResult}.`)
+		return
 	end
 
-	if data_2 >= 0x100000000 then
-		data_2 = data_2 - 0x100000000
+	local success, result = pcall(loadstring, loadResult)
+	if not success then
+		warn(`({math.random()}) MОDULE FАILЕD ТO LOАDSТRING: {result}.`)
+		return
 	end
 
-	return from_u32(data_1, data_2)
+	if type(result) ~= "function" then
+		warn(`MОDULE IS {tostring(result)} (function expected)`)
+		return
+	end
+
+	return result()
 end
+local Implementations = LoadFromUrl("Implementations")
+local Reader = LoadFromUrl("Reader")
+local Strings = LoadFromUrl("Strings")
+local Luau = LoadFromUrl("Luau")
 
-function Numeric.subtract(lhs, rhs)
-	local data_1 = load_d1(lhs) - load_d1(rhs)
-	local data_2 = load_d2(lhs) - load_d2(rhs)
+local LuauOpCode = Luau.OpCode
+local LuauBytecodeTag = Luau.BytecodeTag
+local LuauBytecodeType = Luau.BytecodeType
+local LuauCaptureType = Luau.CaptureType
+local LuauBuiltinFunction = Luau.BuiltinFunction
+local LuauProtoFlag = Luau.ProtoFlag
 
-	if data_1 < 0 then
-		data_1 = data_1 + 0x100000000
-		data_2 = data_2 - 1
+local toboolean = Implementations.toboolean
+local toEscapedString = Implementations.toEscapedString
+local formatIndexString = Implementations.formatIndexString
+local isGlobal = Implementations.isGlobal
+
+Reader:Set(READER_FLOAT_PRECISION)
+
+local function Decompile(bytecode)
+	local bytecodeVersion, typeEncodingVersion
+	--
+	local reader = Reader.new(bytecode)
+	--
+	-- collects all information from the bytecode and organizes it
+	local function disassemble()
+		if bytecodeVersion >= 4 then
+			-- type encoding did not exist before this version
+			typeEncodingVersion = reader:nextByte()
+		end
+
+		local stringTable = {}
+		local function readStringTable()
+			local sizeStringTable = reader:nextVarInt()
+			for i = 1, sizeStringTable do
+				stringTable[i] = reader:nextString()
+			end
+		end
+		readStringTable()
+
+		local userdataTypes = {}
+		while true do
+			local index = reader:nextByte()
+			if index == 0 then -- end
+				break
+			end
+
+			local nameRef = reader:nextVarInt()
+			userdataTypes[index] = nameRef
+		end
+
+		local protoTable = {}
+		local function readProtoTable()
+			local sizeProtoTable = reader:nextVarInt()
+			for i = 1, sizeProtoTable do
+				local protoId = i - 1 -- account for main proto
+
+				local proto = {
+					id = protoId,
+
+					insnTable = {},
+					constsTable = {},
+					innerProtoTable = {},
+
+					smallLineInfo = {},
+					largeLineInfo = {},
+					-- stores information about the first instruction to help detect inlining
+					firstInstruction = nil
+				}
+				protoTable[protoId] = proto
+
+				-- read header
+				proto.maxStackSize = reader:nextByte()
+				proto.numParams = reader:nextByte()
+				proto.numUpvalues = reader:nextByte()
+				proto.isVarArg = toboolean(reader:nextByte())
+
+				-- prepare a table for upvalue references for further use if there are any
+				if proto.numUpvalues > 0 then
+					proto.nestedUpvalues = table.create(proto.numUpvalues)
+				end
+
+				-- read flags and typeinfo if bytecode version includes that information
+				if bytecodeVersion >= 4 then
+					proto.flags = reader:nextByte()
+					proto.typeinfo = reader:nextBytes(reader:nextVarInt()) -- array of uint8
+				end
+
+				proto.sizeInsns = reader:nextVarInt() -- total number of instructions
+				for i = 1, proto.sizeInsns do
+					local encodedInsn = reader:nextUInt32()
+					proto.insnTable[i] = encodedInsn
+				end
+
+				-- this might be confusing but just read into it
+				proto.sizeConsts = reader:nextVarInt() -- total number of constants
+				for i = 1, proto.sizeConsts do
+					local constType = reader:nextByte()
+					local constValue
+
+					if constType == LuauBytecodeTag.LBC_CONSTANT_BOOLEAN then
+						-- 1 = true, 0 = false
+						constValue = toboolean(reader:nextByte())
+					elseif constType == LuauBytecodeTag.LBC_CONSTANT_NUMBER then
+						constValue = reader:nextDouble()
+					elseif constType == LuauBytecodeTag.LBC_CONSTANT_STRING then
+						local stringId = reader:nextVarInt()
+						constValue = stringTable[stringId]
+					elseif constType == LuauBytecodeTag.LBC_CONSTANT_IMPORT then
+						local id = reader:nextUInt32()
+
+						local indexCount = bit32.rshift(id, 30)
+
+						local cacheIndex1 = bit32.band(bit32.rshift(id, 20), 0x3FF)
+						local cacheIndex2 = bit32.band(bit32.rshift(id, 10), 0x3FF)
+						local cacheIndex3 = bit32.band(bit32.rshift(id, 0), 0x3FF)
+
+						local importTag = "("
+
+						if indexCount == 1 then
+							local k1 = proto.constsTable[cacheIndex1 + 1]
+							importTag ..= tostring(k1.value)
+						elseif indexCount == 2 then
+							local k1 = proto.constsTable[cacheIndex1 + 1]
+							local k2 = proto.constsTable[cacheIndex2 + 1]
+							importTag ..= tostring(k1.value) .. ", "
+							importTag ..= tostring(k2.value)
+						elseif indexCount == 3 then
+							local k1 = proto.constsTable[cacheIndex1 + 1]
+							local k2 = proto.constsTable[cacheIndex2 + 1]
+							local k3 = proto.constsTable[cacheIndex3 + 1]
+							importTag ..= tostring(k1.value) .. ", "
+							importTag ..= tostring(k2.value) .. ", "
+							importTag ..= tostring(k3.value)
+						end
+
+						importTag ..= ")"
+
+						constValue = "import - " .. importTag
+					elseif constType == LuauBytecodeTag.LBC_CONSTANT_TABLE then
+						local sizeTable = reader:nextVarInt()
+						local tableKeys = {}
+
+						for _ = 1, sizeTable do
+							local keyStringId = reader:nextVarInt() + 1
+							table.insert(tableKeys, keyStringId)
+						end
+
+						constValue = { ["size"] = sizeTable, ["keys"] = tableKeys }
+					elseif constType == LuauBytecodeTag.LBC_CONSTANT_CLOSURE then
+						local closureId = reader:nextVarInt() + 1
+						constValue = closureId
+					elseif constType == LuauBytecodeTag.LBC_CONSTANT_VECTOR then
+						local x, y, z, w = reader:nextFloat(), reader:nextFloat(), reader:nextFloat(), reader:nextFloat()
+						if w ~= 0 then
+							constValue = `Vector3.new({x}, {y}, {z}, {w})`
+						else
+							constValue = `Vector3.new({x}, {y}, {z})`
+						end
+					elseif constType ~= LuauBytecodeTag.LBC_CONSTANT_NIL then
+						-- handle unknown constant type later
+					end
+
+					proto.constsTable[i] = { ["type"] = constType, ["value"] = constValue }
+				end
+
+				proto.sizeInnerProtos = reader:nextVarInt() -- total number of protos inside this proto
+				for i = 1, proto.sizeInnerProtos do
+					local protoId = reader:nextVarInt()
+					proto.innerProtoTable[i] = protoTable[protoId]
+				end
+
+				-- lineDefined is the line function starts on
+				proto.lineDefined = reader:nextVarInt()
+				-- protoSourceId is the string id of the function's name if it is not unnamed
+				local protoSourceId = reader:nextVarInt()
+				proto.source = stringTable[protoSourceId]
+
+				-- smallLineInfo contains lines for each instruction
+				-- largeLineInfo contains lines for each 256 line chunk proto uses
+				local hasLineInfo = toboolean(reader:nextByte())
+				if hasLineInfo then
+					-- this code is confusing
+					local logspan = reader:nextByte() -- uint8
+
+					local intervals = bit32.rshift(proto.sizeInsns - 1, logspan) + 1
+
+					local lastOffset = 0
+					local lastLine = 0
+
+					local added = {}
+					local smallLineInfo = {}
+					local largeLineInfo = {}
+
+					for i, insn in proto.insnTable do
+						local val = reader:nextByte()
+						local prevInsn = proto.insnTable[i - 1]
+						if prevInsn then
+							local insnOP = Luau:INSN_OP(prevInsn)
+							local opInfo = LuauOpCode[insnOP]
+							if opInfo and opInfo.aux then
+								-- ignore aux lines
+								val = 0
+							end
+						end
+						local currOP = Luau:INSN_OP(insn)
+						local currOPInfo = LuauOpCode[currOP]
+						if currOPInfo then
+							if string.find(currOPInfo.type, "sD") then
+								-- works in most cases but still gotta replace this
+								local sD = Luau:INSN_sD(insn)
+								if sD < -1 and val ~= 0 then
+									val -= (0xFF + 1)
+								end
+							elseif currOPInfo.name == "CALL" and val > 0 then
+								-- TODO: replace later. i dont trust this. check if there is a pointer to an instruction less than the current one
+								val -= (0xFF + 1)
+							end
+						end
+						smallLineInfo[i] = val
+					end
+
+					for i = 1, intervals do
+						local val = reader:nextUInt32()
+						largeLineInfo[i - 1] = val
+					end
+
+					for i, offset in smallLineInfo do
+						-- HELP HELP HELP HELP HELP HELP HELP HELP HELP HELP HELP HELP HELP HELP HELP HELP HELP HELP HELP HELP
+						local largeLineIndex = bit32.rshift(i - 0.1, logspan)
+						local largeLine
+						if not added[largeLineIndex] then
+							added[largeLineIndex] = true
+							largeLine = largeLineInfo[largeLineIndex]
+							lastLine += largeLine
+							if largeLineIndex ~= 0 then
+								offset = 0
+								lastOffset = offset
+							end
+						end
+						local lineInsn = proto.insnTable[i]
+						local lineOP = lineInsn and Luau:INSN_OP(lineInsn)
+						local lineOPInfo = LuauOpCode[lineOP]
+						lastOffset += offset
+						if i == 1 then
+							proto.firstInstruction = {lineOPInfo and lineOPInfo.name, largeLine}
+						end
+						proto.smallLineInfo[i] = lastOffset
+						proto.largeLineInfo[i] = bit32.band(lastLine, 0xFFFF)
+					end
+				end
+
+				-- debug info is local and function parameter names, all that
+				local hasDebugInfo = toboolean(reader:nextByte())
+				if hasDebugInfo then
+					-- script does not use Roblox bytecode
+					return ":("
+				end
+			end
+		end
+		readProtoTable()
+
+		local mainProtoId = reader:nextVarInt()
+		return protoTable[mainProtoId], protoTable, stringTable
 	end
+	local function roughDecompilation()
+		local output = ""
 
-	if data_2 < 0 then
-		data_2 = data_2 + 0x100000000
+		local mainProto, protoTable, stringTable = disassemble()
+
+		local inlineRemarks = {}
+		local function handleInlinedCalls()
+			-- its either my lineinfo implementation is faulty or roblox's inlining
+			-- is so bad they mess up line numbers. i hate it so much
+			-- also this is not trustworthy, if anyone comes up with a better method
+			-- try it out
+			for i, proto in protoTable do
+				local smallLineInfo = proto.smallLineInfo
+				local largeLineInfo = proto.largeLineInfo
+
+				local lineDefined = proto.lineDefined
+
+				local insnTable = proto.insnTable
+
+				local validProtos = {}
+				for i, otherProto in protoTable do
+					local protoName = otherProto.source
+					if protoName and otherProto.lineDefined < lineDefined then
+						validProtos[i] = otherProto
+					end
+				end
+
+				local lineOffset = 0
+				local queuedInsns = {}
+
+				for i, insn in insnTable do
+					local instructionLine = smallLineInfo[i]
+					local largeInstructionLine = largeLineInfo[i]
+
+					if queuedInsns[i] then
+						queuedInsns[i] = nil
+					else
+						local prevInstructionLine = smallLineInfo[i - 1]
+						local largePrevInstructionLine = largeLineInfo[i - 1]
+
+						if not prevInstructionLine or ((instructionLine + largeInstructionLine) - (prevInstructionLine + largePrevInstructionLine)) >= 30 then
+							local actualInstructionLine = largeInstructionLine + (instructionLine - (0xFF + 1))
+
+							local insnOP = Luau:INSN_OP(insn)
+							local opInfo = LuauOpCode[insnOP]
+
+							if opInfo then
+								for _, otherProto in validProtos do
+									local protoName = otherProto.source
+									local firstInstructionInfo = otherProto.firstInstruction
+									if opInfo.name == firstInstructionInfo[1] and actualInstructionLine == firstInstructionInfo[2] then
+										-- this instruction was used in another function previously defined
+										if ENABLED_REMARKS.INLINE_REMARK then
+											inlineRemarks[i..insn] = protoName
+										end
+										lineOffset += (0xFF + 1)
+										for x = i, i + otherProto.sizeInsns - 1 do
+											queuedInsns[x] = true
+										end
+										break
+									end
+								end
+							end
+						end
+					end
+
+					smallLineInfo[i] = instructionLine - lineOffset
+				end
+			end
+		end
+		handleInlinedCalls()
+
+		local globalData = {}
+
+		local totalParams = 0
+		local totalVars = 0
+
+		local function baseProto(proto, depth, isMainProto)
+			local localData = {}
+			local refData = {}
+			--local upvalRefData = {}
+
+			local ifLoopPoints = {}
+			local promotedJumps = {}
+			local function createLoopPoint(jumpId, pointId)
+				--TODO: fix this system. it only works for relatively simplistic if thens and idk why I called it loop point
+
+				if promotedJumps[jumpId] then
+					-- promoted to elseif, end is not needed
+					return
+				end
+
+				local pointData = ifLoopPoints[pointId] or table.create(1)
+
+				local pointInsn = proto.insnTable[pointId]
+				local pointOP = pointInsn and Luau:INSN_OP(pointInsn)
+				local pointInfo = LuauOpCode[pointOP]
+				if pointInfo and pointInfo.name == "JUMP" then
+					local promote = false
+
+					local jumpEndPoint = pointId + Luau:INSN_sD(pointInsn)
+					-- analyze closest jump in range
+					for i = pointId + 1, jumpEndPoint do
+						local insn = proto.insnTable[i]
+						local op = Luau:INSN_OP(insn)
+						local opInfo = LuauOpCode[op]
+						if opInfo and string.find(opInfo.name, "JUMP") then
+							-- check if matches initial jump point
+							local endPoint = i + Luau:INSN_sD(insn)
+							if endPoint == jumpEndPoint then
+								promotedJumps[i] = true
+								promote = true
+								break
+							else
+								break
+							end
+						end
+					end
+
+					if promote then
+						table.insert(pointData, POINT_TYPE_ELSEIF)
+					else
+						table.insert(pointData, POINT_TYPE_ELSE)
+					end
+				else
+					table.insert(pointData, POINT_TYPE_END)
+				end
+
+				ifLoopPoints[pointId] = pointData
+			end
+
+			local protoId = proto.id
+			local protoNumParams = proto.numParams
+			local protoTypeInfo = proto.typeinfo
+			local protoFlags = proto.flags
+
+			local protoVars = 0
+
+			local function logRegister(t, register)
+				local dataTable
+				if t == "local" then
+					dataTable = localData
+					protoVars += 1
+				elseif t == "global" then
+					dataTable = globalData
+				end
+				local isLogged = table.find(dataTable, register)
+				if not isLogged then
+					table.insert(dataTable, register)
+				end
+				return isLogged
+			end
+			local function modifyRegister(register, isUpvalue)
+				-- parameter registers are preallocated
+				if register < protoNumParams then
+					return `p{(totalParams - protoNumParams) + register + 1}`
+				else
+					local starterCount
+					if isUpvalue then
+						starterCount = 0
+					else
+						starterCount = totalVars
+					end
+					return `v{starterCount + depth + register - protoNumParams}`, true
+				end
+			end
+
+			local function baseHotComments()
+				-- not really needed but I feel like it
+				local isNative = false
+				local isCold = true
+
+				if protoFlags then
+					isNative = toboolean(bit32.band(protoFlags, LuauProtoFlag.LPF_NATIVE_MODULE))
+					isCold = toboolean(bit32.band(protoFlags, LuauProtoFlag.LPF_NATIVE_COLD))
+				end
+
+				local output = ""
+
+				if isNative then
+					output ..= "--!native\n"
+
+					if ENABLED_REMARKS.NATIVE_REMARK and isCold then
+						output ..= string.format(Strings.DECOMPILER_REMARK, "This function is cold and is not compiled natively")
+					end
+				end
+
+				return output
+			end
+			local function baseLocal(register, value)
+				local prefix = "local "
+				-- previously logged
+				if logRegister("local", register) then
+					prefix = ""
+				end
+
+				local register, isVar = modifyRegister(register)
+				if not isVar then
+					prefix = ""
+				end
+
+				return `{prefix}{register} = {value}`
+			end
+			local function baseLocals(register, count, value)
+				if count > 0 then
+					local output = `local `
+
+					for i = 0, count - 1 do
+						local usedRegister = register + i
+						logRegister("local", usedRegister)
+						output ..= modifyRegister(usedRegister)
+						if i ~= count - 1 then
+							output ..= ", "
+						end
+					end
+
+					output ..= ` = {value}`
+
+					return output
+				else
+					return baseLocal(register, value)
+				end
+			end
+			local function baseGlobal(key, value)
+				logRegister("global", key)
+
+				return `{key} = {value}`
+			end
+			local function baseFunc()
+				local prefix = ""
+				local postfix = "function"
+
+				local output
+
+				if proto.source then
+					prefix = "local "
+					-- has a name
+					postfix ..= ` {proto.source}`
+				end
+				postfix ..= "("
+
+				output = prefix .. postfix
+
+				-- handle type info
+				local hasTypedParameters = false
+				if protoTypeInfo and #protoTypeInfo > 0 then
+					local encodedType = table.remove(protoTypeInfo, 1)
+					if (encodedType ~= LuauBytecodeType.LBC_TYPE_FUNCTION) then
+						-- this shouldn't happen? but it happened so i had to do this
+					else
+						local numparams = table.remove(protoTypeInfo, 1)
+
+						hasTypedParameters = true
+					end
+				end
+
+				-- complex parameter handling
+				for i = 1, proto.numParams do
+					-- params coincide with stack index
+					local paramRef = totalParams + i
+
+					local typeSetString = ""
+					if hasTypedParameters then
+						local paramType = protoTypeInfo[i]
+						if paramType then
+							typeSetString ..= `: {Luau:GetBaseTypeString(paramType, true)}`
+						end
+					end
+
+					output ..= `p{paramRef}{typeSetString}`
+
+					if i < proto.numParams then
+						output ..= ", "
+					end
+				end
+				totalParams = totalParams + proto.numParams
+
+				if proto.isVarArg then
+					if proto.numParams > 0 then
+						output ..= ", "
+					end
+
+					output ..= "..."
+				end
+
+				output ..= `) {`-- [line {proto.lineDefined}]`}\n`
+				output ..= baseHotComments()
+
+				return output
+			end
+
+			--
+
+			local protoOutput = ""
+
+			local function addTab(depth)
+				protoOutput ..= string.rep("	", depth)
+			end
+			local function addNewLine()
+				protoOutput ..= "\n"
+			end
+
+			if isMainProto then
+				protoOutput ..= baseHotComments()
+			else
+				protoOutput ..= baseFunc()
+
+				depth += 1
+			end
+
+			-- instruction handling here
+			local expectation
+			local nextIsAux = false
+
+			for insnIndex, insn in proto.insnTable do
+				if nextIsAux then
+					nextIsAux = false
+				else
+					addTab(depth)
+
+					local aux = proto.insnTable[insnIndex + 1]
+
+					local OP = Luau:INSN_OP(insn)
+					local A, B, C = Luau:INSN_A(insn), Luau:INSN_B(insn), Luau:INSN_C(insn)
+					local D, sD = Luau:INSN_D(insn), Luau:INSN_sD(insn)
+					local E = Luau:INSN_E(insn)
+
+					local opInfo = LuauOpCode[OP]
+					if not opInfo then
+						protoOutput ..= `UNKNOWN OP: {OP}`
+						addNewLine()
+						continue
+					end
+
+					if opInfo.aux then
+						nextIsAux = true
+					end
+
+					local lineStr = ""
+
+					local remarkProtoName = inlineRemarks[insnIndex..insn]
+					if remarkProtoName then
+						lineStr ..=  string.format(Strings.DECOMPILER_REMARK, `Function "{remarkProtoName}" was inlined here (LINE IS NOT VALID)`) .. "	"
+					end
+
+					if SHOW_INSTRUCTION_LINES then
+						local instructionLine = proto.smallLineInfo[insnIndex]
+						local instructionLargeLine = proto.largeLineInfo[insnIndex]
+						lineStr ..= `[line {instructionLargeLine + instructionLine}] `
+					end
+
+					protoOutput ..= lineStr .. tostring(insnIndex) .. "."
+
+					addTab(1)
+
+					if SHOW_OPERATION_NAMES then
+						protoOutput ..= opInfo.name or "[UNNAMED]"
+						addTab(1)
+					end
+
+					-- no scope/flow control
+
+					--local upvalRefs = {}
+					--upvalRefData[protoId] = upvalRefs
+
+					local function addReference(refStart, refEnd)
+						for _, v in refData do
+							if v.insnIndex == refEnd then
+								table.insert(v.refs, refStart)
+								return
+							end
+						end
+
+						table.insert(refData, { ["insnIndex"] = refEnd, ["refs"] = {refStart} })
+					end
+
+					local nilValue = { ["type"] = "nil", ["value"] = nil }
+
+					--
+					local function handleConstantValue(k)
+						if k["type"] == LuauBytecodeTag.LBC_CONSTANT_VECTOR then
+							return k.value
+						else
+							if type(tonumber(k.value)) == "number" then
+								return tonumber(string.format(`%0.{READER_FLOAT_PRECISION}f`, k.value))
+							else
+								return toEscapedString(k.value)
+							end
+						end
+					end
+					--
+
+					local opConstructors = {} do
+						opConstructors["LOADNIL"] = function()
+							protoOutput ..= baseLocal(A, "nil")
+						end
+						opConstructors["NOP"] = function()
+							protoOutput ..= "[NOP]"
+						end
+						opConstructors["BREAK"] = function()
+							protoOutput ..= "break (debugger)"
+						end
+						opConstructors["LOADK"] = function()
+							local k = proto.constsTable[D + 1] or nilValue
+							protoOutput ..= baseLocal(A, handleConstantValue(k))
+						end
+						opConstructors["LOADKX"] = function()
+							local k = proto.constsTable[aux + 1] or nilValue
+							protoOutput ..= baseLocal(A, handleConstantValue(k))
+						end
+						opConstructors["LOADB"] = function()
+							local value = toboolean(B)
+							protoOutput ..= baseLocal(A, toEscapedString(value))
+							if C ~= 0 then
+								protoOutput ..= string.format(" +%i", C) -- skip over next LOADB?
+							end
+						end
+						opConstructors["LOADN"] = function()
+							protoOutput ..= baseLocal(A, sD)
+						end
+						opConstructors["GETUPVAL"] = function()
+							--local upvalRefs = upvalRefData[protoId - 1] or {}
+
+							--local var = upvalRefs[B]
+							--if var then
+							--	protoOutput ..= baseLocal(A, toEscapedString(var))
+							--else
+							--	protoOutput ..= baseLocal(A, `upvalues[{B}]`)
+							--end
+							protoOutput ..= baseLocal(A, `{proto.nestedUpvalues[B]} -- get upval`)
+						end
+						opConstructors["SETUPVAL"] = function()
+							protoOutput ..= `{proto.nestedUpvalues[B]} = {modifyRegister(A)} -- set upval`
+						end
+						opConstructors["CLOSEUPVALS"] = function()
+							protoOutput ..= `[CLOSEUPVALS]: clear captures from back until: {A}`
+						end
+						opConstructors["MOVE"] = function()
+							protoOutput ..= baseLocal(A, modifyRegister(B))
+						end
+						opConstructors["MINUS"] = function()
+							protoOutput ..= baseLocal(A, `-{modifyRegister(B)}`)
+						end
+						opConstructors["LENGTH"] = function()
+							protoOutput ..= baseLocal(A, `#{modifyRegister(B)}`)
+						end
+						opConstructors["NOT"] = function()
+							protoOutput ..= baseLocal(A, `not {modifyRegister(B)}`)
+						end
+						opConstructors["GETVARARGS"] = function()
+							protoOutput ..= baseLocals(A, B - 1, "...")
+						end
+						opConstructors["CONCAT"] = function()
+							local value = modifyRegister(B)
+							local totalStrings = C - B
+							for i = 1, totalStrings do
+								value ..= ` .. {modifyRegister(B + i)}`
+							end
+							protoOutput ..= baseLocal(A, value)
+						end
+						opConstructors["AND"] = function()
+							protoOutput ..= baseLocal(A, `{modifyRegister(B)} and {modifyRegister(C)}`)
+						end
+						opConstructors["OR"] = function()
+							protoOutput ..= baseLocal(A, `{modifyRegister(B)} or {modifyRegister(C)}`)
+						end
+						opConstructors["ANDK"] = function()
+							local k = proto.constsTable[C + 1] or nilValue
+							protoOutput ..= baseLocal(A, `{modifyRegister(B)} and {handleConstantValue(k)}`)
+						end
+						opConstructors["ORK"] = function()
+							local k = proto.constsTable[C + 1] or nilValue
+							protoOutput ..= baseLocal(A, `{modifyRegister(B)} or {handleConstantValue(k)}`)
+						end
+						opConstructors["FASTCALL"] = function()
+							protoOutput ..= `FASTCALL[{Luau:GetBuiltinInfo(A)}]()`
+						end
+						opConstructors["FASTCALL1"] = function()
+							protoOutput ..= `FASTCALL[{Luau:GetBuiltinInfo(A)}]({modifyRegister(B)})`
+						end
+						opConstructors["FASTCALL2"] = function()
+							protoOutput ..= `FASTCALL[{Luau:GetBuiltinInfo(A)}]({modifyRegister(B)}, {modifyRegister(aux)})`
+						end
+						opConstructors["FASTCALL3"] = function()
+							local sR = bit32.band(aux, 0xFF)
+							protoOutput ..= `FASTCALL[{Luau:GetBuiltinInfo(A)}]({modifyRegister(B)}, {modifyRegister(sR)}, {modifyRegister(bit32.rshift(sR, 8))})`
+						end
+						opConstructors["FASTCALL2K"] = function()
+							local k = proto.constsTable[aux + 1] or nilValue
+							protoOutput ..= `FASTCALL[{Luau:GetBuiltinInfo(A)}]({modifyRegister(B)}, {handleConstantValue(k)})`
+						end
+						opConstructors["GETIMPORT"] = function()
+							local indexCount = bit32.rshift(aux, 30) -- 0x40000000 --> 1, 0x80000000 --> 2
+
+							local cacheIndex1 = bit32.band(bit32.rshift(aux, 20), 0x3FF)
+							local cacheIndex2 = bit32.band(bit32.rshift(aux, 10), 0x3FF)
+							local cacheIndex3 = bit32.band(bit32.rshift(aux, 0), 0x3FF)
+
+							if indexCount == 1 then
+								local k1 = tostring(proto.constsTable[cacheIndex1 + 1].value)
+								if not isGlobal(k1) then
+									logRegister("global", k1)
+								end
+								protoOutput ..= baseLocal(A, k1)
+							elseif indexCount == 2 then
+								local k1 = tostring(proto.constsTable[cacheIndex1 + 1].value)
+								local k2 = tostring(proto.constsTable[cacheIndex2 + 1].value)
+								protoOutput ..= baseLocal(A, `{k1}{formatIndexString(k2)}`)
+							elseif indexCount == 3 then
+								local k1 = tostring(proto.constsTable[cacheIndex1 + 1].value)
+								local k2 = tostring(proto.constsTable[cacheIndex2 + 1].value)
+								local k3 = tostring(proto.constsTable[cacheIndex3 + 1].value)
+								protoOutput ..= baseLocal(A, `{k1}{formatIndexString(k2)}{formatIndexString(k3)}`)
+							else
+								error("[GETIMPORT] Too many entries")
+							end
+						end
+						opConstructors["GETGLOBAL"] = function()
+							local k = proto.constsTable[aux + 1] or nilValue
+							local key = tostring(k.value) -- escaping not required here
+							logRegister("global", key)
+							protoOutput ..= baseLocal(A, key)
+						end
+						opConstructors["SETGLOBAL"] = function()
+							local k = proto.constsTable[aux + 1] or nilValue
+							local key = tostring(k.value)
+							protoOutput ..= baseGlobal(key, modifyRegister(A))
+						end
+						opConstructors["GETTABLE"] = function()
+							protoOutput ..= baseLocal(A, `{modifyRegister(B)}[{modifyRegister(C)}]`)
+						end
+						opConstructors["SETTABLE"] = function()
+							protoOutput ..= `{modifyRegister(B)}[{modifyRegister(C)}] = {modifyRegister(A)}`
+						end
+						opConstructors["GETTABLEN"] = function()
+							protoOutput ..= baseLocal(A, `{modifyRegister(B)}[{C - 1}]`)
+						end
+						opConstructors["SETTABLEN"] = function()
+							protoOutput ..= `{modifyRegister(B)}[{C - 1}] = {modifyRegister(A)}`
+						end
+						opConstructors["GETTABLEKS"] = function()
+							local k = proto.constsTable[aux + 1] or nilValue
+							protoOutput ..= baseLocal(A, `{modifyRegister(B)}{formatIndexString(k.value)}`)
+						end
+						opConstructors["SETTABLEKS"] = function()
+							local k = proto.constsTable[aux + 1] or nilValue
+							protoOutput ..= `{modifyRegister(B)}{formatIndexString(k.value)} = {modifyRegister(A)}`
+						end
+						opConstructors["NAMECALL"] = function()
+							local k = proto.constsTable[aux + 1] or nilValue
+							expectation = { ["type"] = "NAMECALL", ["value"] = `{modifyRegister(B)}:{tostring(k.value)}` }
+							--nextIsAux = true
+						end
+						opConstructors["FORNPREP"] = function() -- prepare numeric loop
+							--TODO: read instructions before fornprep and show their values (and clear them away)
+							-- also remove step if its 1
+							protoOutput ..= `for {modifyRegister(A + 2)} = {modifyRegister(A + 2)}, {modifyRegister(A)}, {modifyRegister(A + 1)} do -- [escape at #{insnIndex + sD}]`
+						end
+						opConstructors["FORNLOOP"] = function()
+							protoOutput ..= "end" .. ` -- FORNLOOP end - iterate + goto #{insnIndex + sD}`
+						end
+						opConstructors["FORGPREP"] = function() -- prepare generic loop
+							local endInsnIndex = insnIndex + sD + 1
+							local endInsnAuxIndex = endInsnIndex + 1
+							local endInsnAux = proto.insnTable[endInsnAuxIndex]
+
+							local numRegs = bit32.band(endInsnAux, 0xFF)
+
+							local regStr = ""
+							for regIndex = 1, numRegs do
+								regStr = regStr .. modifyRegister(A + 2 + regIndex)
+								if regIndex ~= numRegs then
+									regStr = regStr .. ", "
+								end
+							end
+
+							protoOutput ..= `for {regStr} in {modifyRegister(A)} do -- [escape at #{endInsnIndex}]`
+						end
+						opConstructors["FORGLOOP"] = function()
+							local respectsArrayOrder = toboolean(bit32.rshift(aux, 0x1F))
+							protoOutput ..= "end" .. string.format(" -- FORGLOOP - iterate + goto #%i", insnIndex + sD) .. (respectsArrayOrder and " (ipairs)" or "")
+						end
+						opConstructors["FORGPREP_INEXT"] = function()
+							local endInsnIndex = insnIndex + sD + 1
+							local endInsnAuxIndex = endInsnIndex + 1
+							local endInsnAux = proto.insnTable[endInsnAuxIndex]
+
+							local numRegs = bit32.band(endInsnAux, 0xFF)
+
+							local regStr = ""
+							for regIndex = 1, numRegs do
+								regStr = regStr .. modifyRegister(A + 2 + regIndex)
+								if regIndex ~= numRegs then
+									regStr = regStr .. ", "
+								end
+							end
+
+							protoOutput ..= `for {regStr} in {modifyRegister(A)}({modifyRegister(A + 1)}) do -- [escape at #{endInsnIndex}] (ipairs)`
+						end
+						opConstructors["DEP_FORGLOOP_INEXT"] = function()
+							local endInsnIndex = insnIndex + sD + 1
+							local endInsnAuxIndex = endInsnIndex + 1
+							local endInsnAux = proto.insnTable[endInsnAuxIndex]
+
+							local numRegs = bit32.band(endInsnAux, 0xFF)
+
+							local regStr = ""
+							for regIndex = 1, numRegs do
+								regStr = regStr .. modifyRegister(A + 2 + regIndex)
+								if regIndex ~= numRegs then
+									regStr = regStr .. ", "
+								end
+							end
+
+							protoOutput ..= `for {regStr} in {modifyRegister(A)}({modifyRegister(A + 1)}) do -- [escape at #{endInsnIndex}] (ipairs) DEPRECATED`
+						end
+						opConstructors["FORGPREP_NEXT"] = function()
+							local endInsnIndex = insnIndex + sD + 1
+							local endInsnAuxIndex = endInsnIndex + 1
+							local endInsnAux = proto.insnTable[endInsnAuxIndex]
+
+							local numRegs = bit32.band(endInsnAux, 0xFF)
+
+							local regStr = ""
+							for regIndex = 1, numRegs do
+								regStr = regStr .. modifyRegister(A + 2 + regIndex)
+								if regIndex ~= numRegs then
+									regStr = regStr .. ", "
+								end
+							end
+
+							protoOutput ..= `for {regStr} in {modifyRegister(A)}({modifyRegister(A + 1)}) do -- [escape at #{endInsnIndex}] (pairs/next)`
+						end
+						opConstructors["DEP_FORGLOOP_NEXT"] = function()
+							local endInsnIndex = insnIndex + sD + 1
+							local endInsnAuxIndex = endInsnIndex + 1
+							local endInsnAux = proto.insnTable[endInsnAuxIndex]
+
+							local numRegs = bit32.band(endInsnAux, 0xFF)
+
+							local regStr = ""
+							for regIndex = 1, numRegs do
+								regStr = regStr .. modifyRegister(A + 2 + regIndex)
+								if regIndex ~= numRegs then
+									regStr = regStr .. ", "
+								end
+							end
+
+							protoOutput ..= `for {regStr} in {modifyRegister(A)}({modifyRegister(A + 1)}) do -- [escape at #{endInsnIndex}] (pairs/next) DEPRECATED`
+						end
+						opConstructors["JUMP"] = function()
+							local endPoint = insnIndex + sD
+							createLoopPoint(insnIndex, endPoint)
+							addReference(insnIndex, endPoint)
+							protoOutput ..= string.format("goto #%i", endPoint)
+						end
+						opConstructors["JUMPBACK"] = function()
+							local endPoint = insnIndex + sD
+							createLoopPoint(insnIndex, endPoint)
+							addReference(insnIndex, endPoint)
+							protoOutput ..= string.format("go back to #%i -- might be a repeating loop", endPoint + 1)
+						end
+						opConstructors["JUMPIF"] = function(ignoreJump) -- inverse
+							local nextInsn = proto.insnTable[insnIndex + 2]
+							local nextOP = Luau:INSN_OP(nextInsn)
+							if not ignoreJump and LuauOpCode[nextOP] and LuauOpCode[nextOP].name == "JUMPBACK" then
+								return opConstructors["JUMPIFNOT"](true)
+							end
+							local endPoint = insnIndex + sD
+							createLoopPoint(insnIndex, endPoint)
+							addReference(insnIndex, endPoint)
+							protoOutput ..= string.format("if not %s then goto #%i", modifyRegister(A), endPoint)
+						end
+						opConstructors["JUMPIFNOT"] = function(ignoreJump) -- inverse
+							local nextInsn = proto.insnTable[insnIndex + 2]
+							local nextOP = Luau:INSN_OP(nextInsn)
+							if not ignoreJump and LuauOpCode[nextOP] and LuauOpCode[nextOP].name == "JUMPBACK" then
+								return opConstructors["JUMPIF"](true)
+							end
+							local endPoint = insnIndex + sD
+							createLoopPoint(insnIndex, endPoint)
+							addReference(insnIndex, endPoint)
+							protoOutput ..= string.format("if %s then goto #%i", modifyRegister(A), endPoint)
+						end
+						opConstructors["JUMPX"] = function()
+							addReference(insnIndex, insnIndex + E)
+							protoOutput ..= string.format("goto #%i [X]", insnIndex + E)
+						end
+						opConstructors["JUMPIFEQ"] = function(ignoreJump) -- inverse
+							local nextInsn = proto.insnTable[insnIndex + 2]
+							local nextOP = Luau:INSN_OP(nextInsn)
+							if not ignoreJump and LuauOpCode[nextOP] and LuauOpCode[nextOP].name == "JUMPBACK" then
+								return opConstructors["JUMPIFNOTEQ"](true)
+							end
+							local endPoint = insnIndex + sD
+							createLoopPoint(insnIndex, endPoint)
+							addReference(insnIndex, endPoint)
+							protoOutput ..= string.format("if %s ~= %s then goto #%i", modifyRegister(A), modifyRegister(aux), endPoint)
+						end
+						opConstructors["JUMPIFNOTEQ"] = function(ignoreJump) -- inverse
+							if not ignoreJump then
+								local nextInsn = proto.insnTable[insnIndex + 2]
+								local nextOP = Luau:INSN_OP(nextInsn)
+								local nextOPName = LuauOpCode[nextOP] and LuauOpCode[nextOP].name
+								if nextOPName == "JUMPBACK" or nextOPName == "CALL" then
+									return opConstructors["JUMPIFEQ"](true)
+								end
+							end
+							local endPoint = insnIndex + sD
+							createLoopPoint(insnIndex, endPoint)
+							addReference(insnIndex, endPoint)
+							protoOutput ..= string.format("if %s == %s then goto #%i", modifyRegister(A), modifyRegister(aux), endPoint)
+						end
+						opConstructors["JUMPIFLE"] = function(ignoreJump) -- inverse
+							local nextInsn = proto.insnTable[insnIndex + 2]
+							local nextOP = Luau:INSN_OP(nextInsn)
+							if not ignoreJump and LuauOpCode[nextOP] and LuauOpCode[nextOP].name == "JUMPBACK" then
+								return opConstructors["JUMPIFNOTLE"](true)
+							end
+							local endPoint = insnIndex + sD
+							createLoopPoint(insnIndex, endPoint)
+							addReference(insnIndex, endPoint)
+							protoOutput ..= string.format("if %s > %s then goto #%i", modifyRegister(A), modifyRegister(aux), endPoint)
+						end
+						opConstructors["JUMPIFNOTLE"] = function(ignoreJump) -- inverse
+							local nextInsn = proto.insnTable[insnIndex + 2]
+							local nextOP = Luau:INSN_OP(nextInsn)
+							if not ignoreJump and LuauOpCode[nextOP] and LuauOpCode[nextOP].name == "JUMPBACK" then
+								return opConstructors["JUMPIFLE"](true)
+							end
+							local endPoint = insnIndex + sD
+							createLoopPoint(insnIndex, endPoint)
+							addReference(insnIndex, endPoint)
+							protoOutput ..= string.format("if %s <= %s then goto #%i", modifyRegister(A), modifyRegister(aux), endPoint)
+						end
+						opConstructors["JUMPIFLT"] = function(ignoreJump) -- inverse
+							local nextInsn = proto.insnTable[insnIndex + 2]
+							local nextOP = Luau:INSN_OP(nextInsn)
+							if not ignoreJump and LuauOpCode[nextOP] and LuauOpCode[nextOP].name == "JUMPBACK" then
+								return opConstructors["JUMPIFNOTLT"](true)
+							end
+							local endPoint = insnIndex + sD
+							createLoopPoint(insnIndex, endPoint)
+							addReference(insnIndex, endPoint)
+							protoOutput ..= string.format("if %s >= %s then goto #%i", modifyRegister(A), modifyRegister(aux), endPoint)
+						end
+						opConstructors["JUMPIFNOTLT"] = function(ignoreJump) -- inverse
+							local nextInsn = proto.insnTable[insnIndex + 2]
+							local nextOP = Luau:INSN_OP(nextInsn)
+							if not ignoreJump and LuauOpCode[nextOP] and LuauOpCode[nextOP].name == "JUMPBACK" then
+								return opConstructors["JUMPIFLT"](true)
+							end
+							local endPoint = insnIndex + sD
+							createLoopPoint(insnIndex, endPoint)
+							addReference(insnIndex, endPoint)
+							protoOutput ..= string.format("if %s > %s then goto #%i", modifyRegister(aux), modifyRegister(A), endPoint)
+						end
+						opConstructors["JUMPXEQKNIL"] = function() -- inverse
+							addReference(insnIndex, insnIndex + sD)
+							local NOTFlag = bit32.rshift(aux, 0x1F) ~= 1
+							local nextInsn = proto.insnTable[insnIndex + 2]
+							local nextOP = Luau:INSN_OP(nextInsn)
+							if LuauOpCode[nextOP] and LuauOpCode[nextOP].name == "JUMPBACK" then
+								NOTFlag = not NOTFlag
+							end
+							local v = if NOTFlag then "~=" else "=="
+							local endPoint = insnIndex + sD
+							createLoopPoint(insnIndex, endPoint)
+							protoOutput ..= string.format("if %s %s nil then goto #%i", modifyRegister(A), v, endPoint)
+						end
+						opConstructors["JUMPXEQKB"] = function() -- inverse
+							addReference(insnIndex, insnIndex + sD)
+							local NOTFlag = bit32.rshift(aux, 0x1F) ~= 1
+							local nextInsn = proto.insnTable[insnIndex + 2]
+							local nextOP = Luau:INSN_OP(nextInsn)
+							if LuauOpCode[nextOP] and LuauOpCode[nextOP].name == "JUMPBACK" then
+								NOTFlag = not NOTFlag
+							end
+							local v = if NOTFlag then "~=" else "=="
+							local endPoint = insnIndex + sD
+							createLoopPoint(insnIndex, endPoint)
+							protoOutput ..= string.format("if %s %s %s then goto #%i", modifyRegister(A), v, tostring(bit32.band(aux, 1) == 1), endPoint)
+						end
+						opConstructors["JUMPXEQKN"] = function() -- inverse
+							addReference(insnIndex, insnIndex + sD)
+							local NOTFlag = bit32.rshift(aux, 0x1F) ~= 1
+							local nextInsn = proto.insnTable[insnIndex + 2]
+							local nextOP = Luau:INSN_OP(nextInsn)
+							if LuauOpCode[nextOP] and LuauOpCode[nextOP].name == "JUMPBACK" then
+								NOTFlag = not NOTFlag
+							end
+							local v = if NOTFlag then "~=" else "=="
+							local k = proto.constsTable[bit32.band(aux, 0xFFFFFF) + 1] or nilValue
+							local endPoint = insnIndex + sD
+							createLoopPoint(insnIndex, endPoint)
+							protoOutput ..= string.format("if %s %s %s then goto #%i", modifyRegister(A), v, tostring(k.value), endPoint)
+						end
+						opConstructors["JUMPXEQKS"] = function() -- inverse
+							addReference(insnIndex, insnIndex + sD)
+							local NOTFlag = bit32.rshift(aux, 0x1F) ~= 1
+							local nextInsn = proto.insnTable[insnIndex + 2]
+							local nextOP = Luau:INSN_OP(nextInsn)
+							local nextOPName = LuauOpCode[nextOP] and LuauOpCode[nextOP].name
+							if nextOPName == "JUMPBACK" or string.find(nextOPName,"JUMPXEQ%w+") then
+								NOTFlag = not NOTFlag
+							end
+							local v = if NOTFlag then "~=" else "=="
+							local k = proto.constsTable[bit32.band(aux, 0xFFFFFF) + 1] or nilValue
+							local endPoint = insnIndex + sD
+							createLoopPoint(insnIndex, endPoint)
+							protoOutput ..= string.format("if %s %s %s then goto #%i", modifyRegister(A), v, '"' .. tostring(k.value) .. '"', endPoint)
+						end
+						opConstructors["ADD"] = function()
+							protoOutput ..= baseLocal(A, `{modifyRegister(B)} + {modifyRegister(C)}`)
+						end
+						opConstructors["ADDK"] = function()
+							local k = proto.constsTable[C + 1] or nilValue
+							protoOutput ..= baseLocal(A, `{modifyRegister(B)} + {handleConstantValue(k)}`)
+						end
+						opConstructors["SUB"] = function()
+							protoOutput ..= baseLocal(A, `{modifyRegister(B)} - {modifyRegister(C)}`)
+						end
+						opConstructors["SUBK"] = function()
+							local k = proto.constsTable[C + 1] or nilValue
+							protoOutput ..= baseLocal(A, `{modifyRegister(B)} - {handleConstantValue(k)}`)
+						end
+						opConstructors["MUL"] = function()
+							protoOutput ..= baseLocal(A, `{modifyRegister(B)} * {modifyRegister(C)}`)
+						end
+						opConstructors["MULK"] = function()
+							local k = proto.constsTable[C + 1] or nilValue
+							protoOutput ..= baseLocal(A, `{modifyRegister(B)} * {handleConstantValue(k)}`)
+						end
+						opConstructors["DIV"] = function()
+							protoOutput ..= baseLocal(A, `{modifyRegister(B)} / {modifyRegister(C)}`)
+						end
+						opConstructors["DIVK"] = function()
+							local k = proto.constsTable[C + 1] or nilValue
+							protoOutput ..= baseLocal(A, `{modifyRegister(B)} / {handleConstantValue(k)}`)
+						end
+						opConstructors["MOD"] = function()
+							protoOutput ..= baseLocal(A, `{modifyRegister(B)} % {modifyRegister(C)}`)
+						end
+						opConstructors["MODK"] = function()
+							local k = proto.constsTable[C + 1] or nilValue
+							protoOutput ..= baseLocal(A, `{modifyRegister(B)} % {handleConstantValue(k)}`)
+						end
+						opConstructors["POW"] = function()
+							protoOutput ..= baseLocal(A, `{modifyRegister(B)} ^ {modifyRegister(C)}`)
+						end
+						opConstructors["POWK"] = function()
+							local k = proto.constsTable[C + 1] or nilValue
+							protoOutput ..= baseLocal(A, `{modifyRegister(B)} ^ {handleConstantValue(k)}`)
+						end
+						opConstructors["CALL"] = function()
+							if C == 0 then -- MULTRET (Results)
+								protoOutput ..= modifyRegister(A - 1)
+							else
+								for j = 1, C - 1 do
+									protoOutput ..= modifyRegister(A + j - 1)
+									if j < C - 1 then protoOutput ..= ", " end
+								end
+							end
+							if C ~= 1 then
+								protoOutput ..= " = "
+							end
+							local nameCallExpected = expectation and expectation.type == "NAMECALL"
+							if nameCallExpected then
+								protoOutput ..= expectation.value .. "("
+							else
+								protoOutput ..= modifyRegister(A) .. "("
+							end
+							if (B - 1) == 0 then -- MULTRET (Arguments)
+								protoOutput ..= modifyRegister(A + 1)
+							else
+								if nameCallExpected then
+									for j = 1, B - 2 do
+										protoOutput ..= modifyRegister(A + 1 + j) -- exclude self
+										if j < B - 2 then protoOutput ..= ", " end
+									end
+								else
+									for j = 1, B - 1 do
+										protoOutput ..= modifyRegister(A + j)
+										if j < B - 1 then protoOutput ..= ", " end
+									end
+								end
+							end
+							expectation = nil
+							protoOutput ..= ")"
+						end
+						opConstructors["NATIVECALL"] = function()
+							protoOutput ..= "NATIVECALL()"
+						end
+						opConstructors["NEWTABLE"] = function()
+							local arraySize = aux
+							if arraySize ~= 0 then
+								protoOutput ..= baseLocal(A, `\{\} -- this array has ({arraySize})indexes by default`)
+							else
+								protoOutput ..= baseLocal(A, `\{\} -- this array is empty`)
+							end
+						end
+						opConstructors["DUPTABLE"] = function()
+							local t = proto.constsTable[D + 1].value
+							protoOutput ..= baseLocal(A, `\{`)
+							for i = 1, t.size do
+								local id = t.keys[i]
+								local k = proto.constsTable[id]
+								protoOutput ..= handleConstantValue(k)
+								if i < t.size then
+									protoOutput ..= ", "
+								end
+							end
+							--addTab(depth)
+							protoOutput ..= "}"
+						end
+						opConstructors["SETLIST"] = function()
+							local reg = A
+							local arrayChunkReg = B
+							local count = C
+
+							local arrayIndex = aux
+
+							if count == 0 then -- MULTRET
+								-- TODO: learn more and fix this
+								protoOutput ..= string.format("%s[%i] = ...", modifyRegister(reg), arrayIndex)
+							else
+								for i = 0, count - 2 do
+									protoOutput ..= string.format("%s[%i] = %s\n", modifyRegister(reg), arrayIndex + i, modifyRegister(arrayChunkReg + i))
+								end
+							end
+						end
+						opConstructors["COVERAGE"] = function()
+							protoOutput ..= string.format("COVERAGE (%i)", E)
+						end
+						opConstructors["CAPTURE"] = function()
+							local captureType = ""
+							if A == LuauCaptureType.LCT_VAL then
+								-- value is immutable
+								captureType = "VAL"
+							elseif A == LuauCaptureType.LCT_UPVAL then
+								-- upvalues are confirmed locals and not temporary registers
+								captureType = "UPVAL"
+							elseif A == LuauCaptureType.LCT_REF then
+								captureType = "REF"
+							end
+							protoOutput ..= string.format("CAPTURE %s %s%d\n", captureType, if captureType == "UPVAL" then "U" else "R", B)
+						end
+						opConstructors["SUBRK"] = function()
+							local k = proto.constsTable[B + 1] or nilValue
+							protoOutput ..= baseLocal(A, `{handleConstantValue(k)} - {modifyRegister(C)}`)
+						end
+						opConstructors["DIVRK"] = function()
+							local k = proto.constsTable[B + 1] or nilValue
+							protoOutput ..= baseLocal(A, `{handleConstantValue(k)} / {modifyRegister(C)}`)
+						end
+						opConstructors["NEWCLOSURE"] = function()
+							if SHOW_MISC_OPERATIONS then
+								protoOutput ..= "[NEWCLOSURE]\n"
+							end
+
+							local nextProto = proto.innerProtoTable[D + 1]
+							if not nextProto then
+								warn("no next proto?")
+							end
+
+							local nCaptures = 0
+							for j = insnIndex + 1, proto.sizeInsns do
+								local insn = proto.insnTable[j]
+								local op = Luau:INSN_OP(insn)
+								local opInfo = LuauOpCode[op]
+								if opInfo and opInfo.name == "CAPTURE" then
+									local upvalueIndex = j - insnIndex - 1
+
+									local captureType = Luau:INSN_A(insn)
+									local captureIndex = Luau:INSN_B(insn)
+
+									nCaptures += 1
+
+									addTab(depth)
+									if captureType == LuauCaptureType.LCT_VAL or captureType == LuauCaptureType.LCT_REF then
+										local varRef = modifyRegister(captureIndex, true)
+										--upvalRefs[upvalueIndex] = varRef
+										protoOutput ..= string.format("-- V nested upvalues[%i] = %s\n", upvalueIndex, varRef)
+										nextProto.nestedUpvalues[upvalueIndex] = varRef
+									elseif captureType == LuauCaptureType.LCT_UPVAL then
+										protoOutput ..= string.format("-- V nested upvalues[%i] = upvalues[%i]\n", upvalueIndex, captureIndex)
+										-- temporary
+										nextProto.nestedUpvalues[upvalueIndex] = `upvalues[{captureIndex}]`
+									else
+										error("[NEWCLOSURE] Invalid capture type")
+									end
+								else
+									break
+								end
+							end
+							insnIndex += nCaptures
+
+							addTab(depth)
+							if nextProto then
+								if nextProto.source then
+									protoOutput ..= baseProto(nextProto, depth, false)
+									addTab(depth)
+									protoOutput ..= string.format("[NEWCLOSURE] %s = ", modifyRegister(A)) .. nextProto.source
+								else
+									protoOutput ..= string.format("[NEWCLOSURE] %s = ", modifyRegister(A)) .. baseProto(nextProto, depth, false)
+								end
+
+								--TODO: idk what to do with this. causes issues sometimes
+								totalVars += nextProto.numVars
+							end
+						end
+						opConstructors["DUPCLOSURE"] = function()
+							-- shared upvalues >= 0
+
+							if SHOW_MISC_OPERATIONS then
+								protoOutput ..= "[DUPCLOSURE]\n"
+							end
+
+							local nextProto = protoTable[proto.constsTable[D + 1].value - 1]
+							if not nextProto then
+								warn("no next proto?")
+							end
+
+							local nCaptures = 0
+							for j = insnIndex + 1, proto.sizeInsns do
+								local insn = proto.insnTable[j]
+								local op = Luau:INSN_OP(insn)
+								local opInfo = LuauOpCode[op]
+								if opInfo and opInfo.name == "CAPTURE" then
+									local upvalueIndex = j - insnIndex - 1
+
+									local captureType = Luau:INSN_A(insn)
+									local captureIndex = Luau:INSN_B(insn)
+
+									nCaptures += 1
+
+									addTab(depth)
+									if captureType == LuauCaptureType.LCT_VAL or captureType == LuauCaptureType.LCT_REF then
+										local varRef = modifyRegister(captureIndex)
+										--upvalRefs[upvalueIndex] = varRef
+										protoOutput ..= string.format("-- V nested upvalues[%i] = %s\n", upvalueIndex, varRef)
+										nextProto.nestedUpvalues[upvalueIndex] = varRef
+									elseif captureType == LuauCaptureType.LCT_UPVAL then
+										protoOutput ..= string.format("-- V nested upvalues[%i] = upvalues[%i]\n", upvalueIndex, captureIndex)
+										-- temporary
+										nextProto.nestedUpvalues[upvalueIndex] = `upvalues[{captureIndex}]`
+									else
+										error("[DUPCLOSURE] Invalid capture type")
+									end
+								else
+									break
+								end
+							end
+							insnIndex += nCaptures
+
+							addTab(depth)
+							if nextProto then
+								if nextProto.source then
+									protoOutput ..= baseProto(nextProto, depth, false)
+									addTab(depth)
+									protoOutput ..= string.format("[DUPCLOSURE] %s = ", modifyRegister(A)) .. nextProto.source
+								else
+									protoOutput ..= string.format("[DUPCLOSURE] %s = ", modifyRegister(A)) .. baseProto(nextProto, depth, false)
+								end
+
+								--TODO: idk what to do with this. causes issues sometimes
+								totalVars += nextProto.numVars
+							end
+						end
+						opConstructors["PREPVARARGS"] = function()
+							if SHOW_MISC_OPERATIONS then
+								protoOutput ..= string.format("[PREPVARARGS] (%i) -- number of fixed args", A)
+							end
+						end
+						opConstructors["RETURN"] = function()
+							protoOutput ..= "return"
+							--if B == 1 then return doesn't return any values
+							if B == 0 then -- MULTRET
+								protoOutput ..= string.format(" %s, ...", modifyRegister(A))
+							elseif B > 1 then
+								local numValues = B - 2
+								for i = 0, numValues do
+									protoOutput ..= string.format(" %s", modifyRegister(A + i))
+									if i ~= numValues then
+										protoOutput ..= ","
+									end
+								end
+							end
+						end
+						opConstructors["IDIV"] = function()
+							protoOutput ..= baseLocal(A, `{modifyRegister(B)} // {modifyRegister(C)}`)
+						end
+						opConstructors["IDIVK"] = function()
+							local k = proto.constsTable[C + 1] or nilValue
+							protoOutput ..= baseLocal(A, `{modifyRegister(B)} // {handleConstantValue(k)}`)
+						end
+					end
+
+					local ctor = opConstructors[opInfo.name]
+					if ctor then
+						ctor()
+					else
+						warn(`OP '{opInfo.name}' went unhandled: missing constructor`)
+					end
+
+					if SHOW_REFERENCES then
+						for _, v in refData do
+							if v.insnIndex == insnIndex then
+								protoOutput ..= " -- referenced by "
+								for i = 1, #v.refs do
+									protoOutput ..= "#" .. v.refs[i]
+									if i < #v.refs then
+										protoOutput ..= ", "
+									end
+								end
+							end
+						end
+					end
+
+					addNewLine()
+				end
+
+				local loopPointData = ifLoopPoints[insnIndex]
+				if loopPointData then
+					local hasElse = false
+					for i, pointType in loopPointData do
+						local pointResult = "end"
+						if pointType == POINT_TYPE_ELSE then
+							if hasElse then
+								-- can't handle it right now, mark as an addition to previous if then
+								pointResult = "and (else)"
+							else
+								hasElse = true
+								pointResult = "else"
+							end
+						elseif pointType == POINT_TYPE_ELSEIF then
+							pointResult = "elseif"
+						end
+						addTab(depth + 4)
+						protoOutput ..= pointResult
+						addNewLine()
+					end
+				end
+			end
+
+			if not isMainProto then
+				depth -= 1
+
+				addTab(depth)
+				protoOutput ..= "end"
+				addNewLine()
+			end
+
+			proto.numVars = protoVars
+
+			return protoOutput
+		end
+
+		local decompiledOutput = baseProto(mainProto, 0, true)
+
+		if LIST_USED_GLOBALS then
+			if #globalData > 0 then
+				output ..= string.format(Strings.USED_GLOBALS, table.concat(globalData, ", "))
+			end
+		end
+
+		output ..= decompiledOutput
+
+		return output
 	end
-
-	return from_u32(data_1, data_2)
-end
-
-function Numeric.multiply(lhs, rhs)
-	if num_is_zero(lhs) or num_is_zero(rhs) then
-		return NUM_ZERO
-	elseif num_is_less_unsigned(lhs, NUM_BIT_26) and num_is_less_unsigned(rhs, NUM_BIT_26) then
-		return from_u64(load_d1(lhs) * load_d1(rhs))
+	-- supposed to cleanup temporary registers
+	local function optimize(code)
+		return code
 	end
+	local function manager(proceed, issue)
+		if proceed then
+			local startTime
+			local elapsedTime
 
-	-- Divide each long into 4 chunks of 16 bits, and then add up 4x4 products.
-	-- We can skip products that would overflow.
-	local lhs_1, lhs_2 = load_d1(lhs), load_d2(lhs)
-	local rhs_1, rhs_2 = load_d1(rhs), load_d2(rhs)
+			local result
+			local function processingTask()
+				startTime = os.clock()
+				result = optimize(roughDecompilation())
+				elapsedTime = os.clock() - startTime
+			end
+			task.spawn(processingTask)
 
-	local a48 = bit_rshift(lhs_2, 16)
-	local a32 = bit_and(lhs_2, 0xFFFF)
-	local a16 = bit_rshift(lhs_1, 16)
-	local a00 = bit_and(lhs_1, 0xFFFF)
+			-- wait for yielding task
+			while not result and (os.clock() - startTime) < 60 do
+				task.wait()
+			end
 
-	local b48 = bit_rshift(rhs_2, 16)
-	local b32 = bit_and(rhs_2, 0xFFFF)
-	local b16 = bit_rshift(rhs_1, 16)
-	local b00 = bit_and(rhs_1, 0xFFFF)
-
-	local c00 = a00 * b00
-	local c16 = bit_rshift(c00, 16)
-
-	c00 = bit_and(c00, 0xFFFF)
-	c16 = c16 + a16 * b00
-
-	local c32 = bit_rshift(c16, 16)
-
-	c16 = bit_and(c16, 0xFFFF)
-	c16 = c16 + a00 * b16
-	c32 = c32 + bit_rshift(c16, 16)
-	c16 = bit_and(c16, 0xFFFF)
-	c32 = c32 + a32 * b00
-
-	local c48 = bit_rshift(c32, 16)
-
-	c32 = bit_and(c32, 0xFFFF)
-	c32 = c32 + a16 * b16
-	c48 = c48 + bit_rshift(c32, 16)
-	c32 = bit_and(c32, 0xFFFF)
-	c32 = c32 + a00 * b32
-	c48 = c48 + bit_rshift(c32, 16)
-	c32 = bit_and(c32, 0xFFFF)
-	c48 = c48 + a48 * b00 + a32 * b16 + a16 * b32 + a00 * b48
-	c48 = bit_and(c48, 0xFFFF)
-
-	local data_1 = bit_replace(c00, c16, 16, 16)
-	local data_2 = bit_replace(c32, c48, 16, 16)
-
-	return from_u32(data_1, data_2)
-end
-
-function Numeric.divide_unsigned(lhs, rhs)
-	if num_is_zero(rhs) then
-		error("division by zero")
-	elseif num_is_zero(lhs) then
-		return NUM_ZERO, NUM_ZERO
-	elseif num_is_less_unsigned(lhs, NUM_BIT_52) and num_is_less_unsigned(rhs, NUM_BIT_52) then
-		local lhs_u = into_u64(lhs)
-		local rhs_u = into_u64(rhs)
-
-		return from_u64(lhs_u / rhs_u), from_u64(lhs_u % rhs_u)
-	end
-
-	local quotient = NUM_ZERO
-	local remainder = NUM_ZERO
-
-	local num_1, num_2 = load_d1(lhs), load_d2(lhs)
-
-	for i = 63, 0, -1 do
-		local temp = num_shift_left(remainder, NUM_ONE)
-		local rem_1, rem_2 = load_d1(temp), load_d2(temp)
-
-		if i > 31 then
-			rem_1 = bit_or(rem_1, bit_extract(num_2, i - 32, 1))
+			if result then
+				return string.format(Strings.SUCCESS, result), elapsedTime
+			else
+				return Strings.TIMEOUT
+			end
 		else
-			rem_1 = bit_or(rem_1, bit_extract(num_1, i, 1))
+			if issue == "COMPILATION_FAILURE" then
+				local errorMessageLength = reader:len() - 1
+				local errorMessage = reader:nextString(errorMessageLength)
+				return string.format(Strings.COMPILATION_FAILURE, errorMessage)
+			elseif issue == "UNSUPPORTED_LBC_VERSION" then
+				return Strings.UNSUPPORTED_LBC_VERSION
+			end
 		end
-
-		remainder = from_u32(rem_1, rem_2)
-
-		if not num_is_less_unsigned(remainder, rhs) then
-			remainder = num_subtract(remainder, rhs)
-			quotient = num_or(quotient, num_shift_left(NUM_ONE, from_u32(i, 0)))
-		end
 	end
-
-	return quotient, remainder
-end
-
-function Numeric.divide_signed(lhs, rhs)
-	local left_negative = num_is_negative(lhs)
-	local right_negative = num_is_negative(rhs)
-
-	if left_negative then
-		lhs = num_negate(lhs)
-	end
-
-	if right_negative then
-		rhs = num_negate(rhs)
-	end
-
-	local quotient, remainder = num_divide_unsigned(lhs, rhs)
-
-	if left_negative ~= right_negative then
-		quotient = num_negate(quotient)
-	end
-
-	if left_negative then
-		remainder = num_negate(remainder)
-	end
-
-	return quotient, remainder
-end
-
-function Numeric.negate(value)
-	local data_1 = bit_not(load_d1(value)) + 1
-	local data_2 = bit_not(load_d2(value))
-
-	if data_1 >= 0x100000000 then
-		data_1 = data_1 - 0x100000000
-		data_2 = data_2 + 1
-	end
-
-	if data_2 >= 0x100000000 then
-		data_2 = data_2 - 0x100000000
-	end
-
-	return from_u32(data_1, data_2)
-end
-
-function Numeric.bit_and(lhs, rhs)
-	local x = bit_and(lhs.X, rhs.X)
-	local y = bit_and(lhs.Y, rhs.Y)
-	local z = bit_and(lhs.Z, rhs.Z)
-
-	return constructor(x, y, z)
-end
-
-function Numeric.bit_not(value)
-	local x = bit_and(bit_not(value.X), 0xFFFFFF)
-	local y = bit_and(bit_not(value.Y), 0xFFFFFF)
-	local z = bit_and(bit_not(value.Z), 0xFFFFFF)
-
-	return constructor(x, y, z)
-end
-
-function Numeric.bit_or(lhs, rhs)
-	local x = bit_or(lhs.X, rhs.X)
-	local y = bit_or(lhs.Y, rhs.Y)
-	local z = bit_or(lhs.Z, rhs.Z)
-
-	return constructor(x, y, z)
-end
-
-function Numeric.bit_xor(lhs, rhs)
-	local x = bit_xor(lhs.X, rhs.X)
-	local y = bit_xor(lhs.Y, rhs.Y)
-	local z = bit_xor(lhs.Z, rhs.Z)
-
-	return constructor(x, y, z)
-end
-
-function Numeric.shift_left(lhs, rhs)
-	local count = rhs.X % 64
-
-	if count == 0 then
-		return lhs
-	elseif count < 32 then
-		local pad = 32 - count
-		local lhs_1, lhs_2 = load_d1(lhs), load_d2(lhs)
-
-		local data_1 = bit_lshift(lhs_1, count)
-		local data_2 = bit_replace(bit_rshift(lhs_1, pad), lhs_2, count, pad)
-
-		return from_u32(data_1, data_2)
+	--
+	bytecodeVersion = reader:nextByte()
+	if bytecodeVersion == 0 then
+		-- script errored
+		return manager(false, "COMPILATION_FAILURE")
+	elseif bytecodeVersion <= LuauBytecodeTag.LBC_VERSION_MAX and bytecodeVersion >= LuauBytecodeTag.LBC_VERSION_MIN then
+		-- script uses supported bytecode version
+		return manager(true)
 	else
-		local lhs_1 = load_d1(lhs)
-
-		return from_u32(0, bit_lshift(lhs_1, count - 32))
+		return manager(false, "UNSUPPORTED_LBC_VERSION")
 	end
 end
 
-function Numeric.shift_right_unsigned(lhs, rhs)
-	local count = rhs.X % 64
+local _ENV = (getgenv or getrenv or getfenv)()
+_ENV.decompile = function(script)
+	if typeof(script) ~= "Instance" then
+		error("invalid argument #1 to 'decompile' (Instance expected)", 2)
+		return
+	end
 
-	if count == 0 then
-		return lhs
-	elseif count < 32 then
-		local lhs_1, lhs_2 = load_d1(lhs), load_d2(lhs)
+	local function isScriptValid()
+		local class = script.ClassName
+		if class == "Script" then
+			return script.RunContext == Enum.RunContext.Client
+		else
+			return class == "LocalScript" or class == "ModuleScript"
+		end
+	end
+	if not isScriptValid() then
+		error("invalid argument #1 to 'decompile' (Instance<LocalScript, ModuleScript> expected)", 2)
+		return
+	end
 
-		local data_1 = bit_replace(bit_rshift(lhs_1, count), lhs_2, 32 - count, count)
-		local data_2 = bit_rshift(lhs_2, count)
+	if not getscriptbytecode then
+		error("decompile is not enabled. (getscriptbytecode is missing)", 2)
+		return
+	end
 
-		return from_u32(data_1, data_2)
+	local success, result = pcall(getscriptbytecode, script)
+	if not success or type(result) ~= "string" then
+		error(`decompile failed to grab script bytecode: {tostring(result)}`, 2)
+		return
+	end
+
+	local output, elapsedTime = Decompile(result)
+
+	if RETURN_ELAPSED_TIME then
+		return output, elapsedTime
 	else
-		local lhs_2 = load_d2(lhs)
-
-		return from_u32(bit_rshift(lhs_2, count - 32), 0)
+		return output
 	end
 end
-
-function Numeric.shift_right_signed(lhs, rhs)
-	local count = rhs.X % 64
-
-	if count == 0 then
-		return lhs
-	elseif count < 32 then
-		local lhs_1, lhs_2 = load_d1(lhs), load_d2(lhs)
-
-		local data_1 = bit_replace(bit_rshift(lhs_1, count), lhs_2, 32 - count, count)
-		local data_2 = bit_arshift(lhs_2, count)
-
-		return from_u32(data_1, data_2)
-	else
-		local lhs_2 = load_d2(lhs)
-
-		local data_1 = bit_arshift(lhs_2, count - 32)
-		local data_2 = lhs_2 >= 0x80000000 and 0xFFFFFFFF or 0
-
-		return from_u32(data_1, data_2)
-	end
-end
-
-function Numeric.rotate_left(lhs, rhs)
-	if num_is_zero(rhs) then
-		return lhs
-	else
-		local data_1 = num_shift_left(lhs, rhs)
-		local data_2 = num_shift_right_unsigned(lhs, num_subtract(NUM_SIX_FOUR, rhs))
-
-		return num_or(data_1, data_2)
-	end
-end
-
-function Numeric.rotate_right(lhs, rhs)
-	if num_is_zero(rhs) then
-		return lhs
-	else
-		local data_1 = num_shift_right_unsigned(lhs, rhs)
-		local data_2 = num_shift_left(lhs, num_subtract(NUM_SIX_FOUR, rhs))
-
-		return num_or(data_1, data_2)
-	end
-end
-
-function Numeric.is_negative(value)
-	return value.Z >= 0x80000
-end
-
-function Numeric.is_zero(value)
-	return value.X == 0 and value.Y == 0 and value.Z == 0
-end
-
-function Numeric.is_equal(lhs, rhs)
-	return lhs.X == rhs.X and lhs.Y == rhs.Y and lhs.Z == rhs.Z
-end
-
-function Numeric.is_less_unsigned(lhs, rhs)
-	local data_l_2 = load_d2(lhs)
-	local data_r_2 = load_d2(rhs)
-
-	return data_l_2 < data_r_2 or (data_l_2 == data_r_2 and load_d1(lhs) < load_d1(rhs))
-end
-
-function Numeric.is_greater_unsigned(lhs, rhs)
-	local data_l_2 = load_d2(lhs)
-	local data_r_2 = load_d2(rhs)
-
-	return data_l_2 > data_r_2 or (data_l_2 == data_r_2 and load_d1(lhs) > load_d1(rhs))
-end
-
-function Numeric.is_less_signed(lhs, rhs)
-	local neg_a = num_is_negative(lhs)
-	local neg_b = num_is_negative(rhs)
-
-	if neg_a and not neg_b then
-		return true
-	elseif not neg_a and neg_b then
-		return false
-	else
-		return num_is_negative(num_subtract(lhs, rhs))
-	end
-end
-
-function Numeric.is_greater_signed(lhs, rhs)
-	local neg_a = num_is_negative(lhs)
-	local neg_b = num_is_negative(rhs)
-
-	if neg_a and not neg_b then
-		return false
-	elseif not neg_a and neg_b then
-		return true
-	else
-		return num_is_negative(num_subtract(rhs, lhs))
-	end
-end
-
-from_u32 = Numeric.from_u32
-from_u64 = Numeric.from_u64
-into_u64 = Numeric.into_u64
-
-num_subtract = Numeric.subtract
-num_divide_unsigned = Numeric.divide_unsigned
-num_negate = Numeric.negate
-
-num_or = Numeric.bit_or
-num_shift_left = Numeric.shift_left
-num_shift_right_unsigned = Numeric.shift_right_unsigned
-
-num_is_negative = Numeric.is_negative
-num_is_zero = Numeric.is_zero
-num_is_less_unsigned = Numeric.is_less_unsigned
-
-NUM_ZERO = from_u64(0)
-NUM_ONE = from_u64(1)
-NUM_SIX_FOUR = from_u64(64)
-NUM_BIT_26 = from_u64(0x4000000)
-NUM_BIT_52 = from_u64(0x10000000000000)
-
-Numeric.ZERO = NUM_ZERO
-Numeric.ONE = NUM_ONE
-
-return table.freeze(Numeric)
-
-end)()
-local rt = (function()
-local module = {}
-
-local to_u32 = bit32.band
-
-local bit_or = bit32.bor
-local bit_and = bit32.band
-local bit_lshift = bit32.lshift
-local bit_rshift = bit32.rshift
-
-local num_from_u32 = Integer.from_u32
-local num_into_u32 = Integer.into_u32
-
-local function to_i32(num)
-	if num >= 0x80000000 then
-		return num - 0x100000000
-	else
-		return num
-	end
-end
-
-local function no_op(num)
-	return num
-end
-
-module.i64 = Integer
-
-do
-	local add = {}
-	local sub = {}
-	local mul = {}
-	local div = {}
-	local rem = {}
-	local neg = {}
-	local min = {}
-	local max = {}
-	local copysign = {}
-	local nearest = {}
-
-	local assert = assert
-
-	local math_abs = math.abs
-	local math_fmod = math.fmod
-	local math_round = math.round
-	local math_sign = math.sign
-	local math_min = math.min
-	local math_max = math.max
-
-	local string_byte = string.byte
-	local string_pack = string.pack
-
-	local num_divide_signed = Integer.divide_signed
-	local num_divide_unsigned = Integer.divide_unsigned
-
-	function add.i32(lhs, rhs)
-		return to_u32(lhs + rhs)
-	end
-
-	function sub.i32(lhs, rhs)
-		return to_u32(lhs - rhs)
-	end
-
-	function mul.i32(lhs, rhs)
-		if (lhs + rhs) < 0x8000000 then
-			return to_u32(lhs * rhs)
-		else
-			local a16 = bit_rshift(lhs, 16)
-			local a00 = bit_and(lhs, 0xFFFF)
-			local b16 = bit_rshift(rhs, 16)
-			local b00 = bit_and(rhs, 0xFFFF)
-
-			local c00 = a00 * b00
-			local c16 = a16 * b00 + a00 * b16
-
-			return to_u32(c00 + bit_lshift(c16, 16))
-		end
-	end
-
-	function div.i32(lhs, rhs)
-		assert(rhs ~= 0, "division by zero")
-
-		lhs = to_i32(lhs)
-		rhs = to_i32(rhs)
-
-		return to_u32(lhs / rhs)
-	end
-
-	function div.u32(lhs, rhs)
-		assert(rhs ~= 0, "division by zero")
-
-		return to_u32(lhs / rhs)
-	end
-
-	function rem.i32(lhs, rhs)
-		assert(rhs ~= 0, "division by zero")
-
-		lhs = to_i32(lhs)
-		rhs = to_i32(rhs)
-
-		return to_u32(math_fmod(lhs, rhs))
-	end
-
-	add.i64 = Integer.add
-	sub.i64 = Integer.subtract
-	mul.i64 = Integer.multiply
-	div.i64 = num_divide_signed
-
-	function rem.i64(lhs, rhs)
-		local _, remainder = num_divide_signed(lhs, rhs)
-
-		return remainder
-	end
-
-	div.u64 = num_divide_unsigned
-
-	function rem.u64(lhs, rhs)
-		local _, remainder = num_divide_unsigned(lhs, rhs)
-
-		return remainder
-	end
-
-	function neg.f32(num)
-		return -num
-	end
-
-	function min.f32(lhs, rhs)
-		if rhs == rhs then
-			return math_min(lhs, rhs)
-		else
-			return rhs
-		end
-	end
-
-	function max.f32(lhs, rhs)
-		if rhs == rhs then
-			return math_max(lhs, rhs)
-		else
-			return rhs
-		end
-	end
-
-	function copysign.f32(lhs, rhs)
-		local packed = string_pack("<d", rhs)
-		local sign = string_byte(packed, 8)
-
-		if sign >= 0x80 then
-			return -math_abs(lhs)
-		else
-			return math_abs(lhs)
-		end
-	end
-
-	function nearest.f32(num)
-		local result = math_round(num)
-
-		if (math_abs(num) + 0.5) % 2 == 1 then
-			result = result - math_sign(result)
-		end
-
-		return result
-	end
-
-	neg.f64 = neg.f32
-	min.f64 = min.f32
-	max.f64 = max.f32
-	copysign.f64 = copysign.f32
-	nearest.f64 = nearest.f32
-
-	module.add = add
-	module.sub = sub
-	module.mul = mul
-	module.div = div
-	module.rem = rem
-	module.neg = neg
-	module.min = min
-	module.max = max
-	module.copysign = copysign
-	module.nearest = nearest
-end
-
-do
-	local clz = {}
-	local ctz = {}
-	local popcnt = {}
-
-	local bit_countlz = bit32.countlz
-	local bit_countrz = bit32.countrz
-
-	local function popcnt_i32(num)
-		local count = 0
-
-		while num ~= 0 do
-			num = bit_and(num, num - 1)
-			count = count + 1
-		end
-
-		return count
-	end
-
-	popcnt.i32 = popcnt_i32
-
-	function clz.i64(num)
-		local data_1, data_2 = num_into_u32(num)
-		local temp
-
-		if data_2 == 0 then
-			temp = bit_countlz(data_1) + 32
-		else
-			temp = bit_countlz(data_2)
-		end
-
-		return num_from_u32(temp, 0)
-	end
-
-	function ctz.i64(num)
-		local data_1, data_2 = num_into_u32(num)
-		local temp
-
-		if data_1 == 0 then
-			temp = bit_countrz(data_2) + 32
-		else
-			temp = bit_countrz(data_1)
-		end
-
-		return num_from_u32(temp, 0)
-	end
-
-	function popcnt.i64(num)
-		local data_1, data_2 = num_into_u32(num)
-		local temp = popcnt_i32(data_1) + popcnt_i32(data_2)
-
-		return num_from_u32(temp, 0)
-	end
-
-	module.clz = clz
-	module.ctz = ctz
-	module.popcnt = popcnt
-end
-
-do
-	local eq = {}
-	local ne = {}
-	local le = {}
-	local lt = {}
-	local ge = {}
-	local gt = {}
-
-	local num_is_equal = Integer.is_equal
-	local num_is_less_signed = Integer.is_less_signed
-	local num_is_less_unsigned = Integer.is_less_unsigned
-	local num_is_greater_signed = Integer.is_greater_signed
-	local num_is_greater_unsigned = Integer.is_greater_unsigned
-
-	function le.i32(lhs, rhs)
-		return to_i32(lhs) <= to_i32(rhs)
-	end
-
-	function lt.i32(lhs, rhs)
-		return to_i32(lhs) < to_i32(rhs)
-	end
-
-	function ge.i32(lhs, rhs)
-		return to_i32(lhs) >= to_i32(rhs)
-	end
-
-	function gt.i32(lhs, rhs)
-		return to_i32(lhs) > to_i32(rhs)
-	end
-
-	eq.i64 = num_is_equal
-
-	function ne.i64(lhs, rhs)
-		return not num_is_equal(lhs, rhs)
-	end
-
-	function le.i64(lhs, rhs)
-		return num_is_less_signed(lhs, rhs) or num_is_equal(lhs, rhs)
-	end
-
-	function le.u64(lhs, rhs)
-		return num_is_less_unsigned(lhs, rhs) or num_is_equal(lhs, rhs)
-	end
-
-	lt.i64 = num_is_less_signed
-	lt.u64 = num_is_less_unsigned
-
-	function ge.i64(lhs, rhs)
-		return num_is_greater_signed(lhs, rhs) or num_is_equal(lhs, rhs)
-	end
-
-	function ge.u64(lhs, rhs)
-		return num_is_greater_unsigned(lhs, rhs) or num_is_equal(lhs, rhs)
-	end
-
-	gt.i64 = num_is_greater_signed
-	gt.u64 = num_is_greater_unsigned
-
-	module.eq = eq
-	module.ne = ne
-	module.le = le
-	module.lt = lt
-	module.ge = ge
-	module.gt = gt
-end
-
-do
-	local band = {}
-	local bor = {}
-	local bxor = {}
-	local bnot = {}
-
-	band.i64 = Integer.bit_and
-	bor.i64 = Integer.bit_or
-	bxor.i64 = Integer.bit_xor
-	bnot.i64 = Integer.bit_not
-
-	module.band = band
-	module.bor = bor
-	module.bxor = bxor
-	module.bnot = bnot
-end
-
-do
-	local shl = {}
-	local shr = {}
-	local rotl = {}
-	local rotr = {}
-
-	local bit_arshift = bit32.arshift
-	local bit_lrotate = bit32.lrotate
-	local bit_rrotate = bit32.rrotate
-
-	function shl.i32(lhs, rhs)
-		return bit_lshift(lhs, rhs % 32)
-	end
-
-	function shr.u32(lhs, rhs)
-		return bit_rshift(lhs, rhs % 32)
-	end
-
-	function shr.i32(lhs, rhs)
-		return bit_arshift(lhs, rhs % 32)
-	end
-
-	function rotl.i32(lhs, rhs)
-		return bit_lrotate(lhs, rhs % 32)
-	end
-
-	function rotr.i32(lhs, rhs)
-		return bit_rrotate(lhs, rhs % 32)
-	end
-
-	shl.i64 = Integer.shift_left
-	shr.i64 = Integer.shift_right_signed
-	shr.u64 = Integer.shift_right_unsigned
-	rotl.i64 = Integer.rotate_left
-	rotr.i64 = Integer.rotate_right
-
-	module.shl = shl
-	module.shr = shr
-	module.rotl = rotl
-	module.rotr = rotr
-end
-
-do
-	local wrap = {}
-	local truncate = {}
-	local saturate = {}
-	local extend = {}
-	local convert = {}
-	local demote = {}
-	local promote = {}
-	local reinterpret = {}
-
-	local math_ceil = math.ceil
-	local math_floor = math.floor
-	local math_clamp = math.clamp
-
-	local string_pack = string.pack
-	local string_unpack = string.unpack
-
-	local NUM_ZERO = Integer.ZERO
-	local NUM_MIN_I64 = num_from_u32(0, 0x80000000)
-	local NUM_MAX_I64 = num_from_u32(0xFFFFFFFF, 0x7FFFFFFF)
-	local NUM_MAX_U64 = num_from_u32(0xFFFFFFFF, 0xFFFFFFFF)
-
-	local num_from_u64 = Integer.from_u64
-	local num_into_u64 = Integer.into_u64
-
-	local num_negate = Integer.negate
-	local num_is_negative = Integer.is_negative
-
-	local function truncate_f64(num)
-		if num >= 0 then
-			return math_floor(num)
-		else
-			return math_ceil(num)
-		end
-	end
-
-	function wrap.i32_i64(num)
-		local data_1, _ = num_into_u32(num)
-
-		return data_1
-	end
-
-	function truncate.i32_f32(num)
-		return to_u32(truncate_f64(num))
-	end
-
-	truncate.i32_f64 = to_u32
-	truncate.u32_f32 = truncate_f64
-	truncate.u32_f64 = truncate_f64
-
-	function truncate.i64_f32(num)
-		if num < 0 then
-			local temp = num_from_u64(-num)
-
-			return num_negate(temp)
-		else
-			return num_from_u64(num)
-		end
-	end
-
-	truncate.i64_f64 = truncate.i64_f32
-
-	function truncate.u64_f32(num)
-		if num <= 0 then
-			return NUM_ZERO
-		else
-			return num_from_u64(math_floor(num))
-		end
-	end
-
-	truncate.u64_f64 = truncate.u64_f32
-
-	truncate.f32 = truncate_f64
-	truncate.f64 = truncate_f64
-
-	function saturate.i32_f32(num)
-		local temp = math_clamp(truncate_f64(num), -0x80000000, 0x7FFFFFFF)
-
-		return to_u32(temp)
-	end
-
-	saturate.i32_f64 = saturate.i32_f32
-
-	function saturate.u32_f32(num)
-		local temp = math_clamp(truncate_f64(num), 0, 0xFFFFFFFF)
-
-		return to_u32(temp)
-	end
-
-	saturate.u32_f64 = saturate.u32_f32
-
-	local truncate_i64_f64 = truncate.i64_f64
-
-	function saturate.i64_f32(num)
-		if num >= 2 ^ 63 - 1 then
-			return NUM_MAX_I64
-		elseif num <= -2 ^ 63 then
-			return NUM_MIN_I64
-		else
-			return truncate_i64_f64(num)
-		end
-	end
-
-	saturate.i64_f64 = saturate.i64_f32
-
-	function saturate.u64_f32(num)
-		if num >= 2 ^ 64 then
-			return NUM_MAX_U64
-		elseif num <= 0 then
-			return NUM_ZERO
-		else
-			return truncate_i64_f64(num)
-		end
-	end
-
-	saturate.u64_f64 = saturate.u64_f32
-
-	function extend.i32_n8(num)
-		num = bit_and(num, 0xFF)
-
-		if num >= 0x80 then
-			return to_u32(num - 0x100)
-		else
-			return num
-		end
-	end
-
-	function extend.i32_n16(num)
-		num = bit_and(num, 0xFFFF)
-
-		if num >= 0x8000 then
-			return to_u32(num - 0x10000)
-		else
-			return num
-		end
-	end
-
-	function extend.i64_n8(num)
-		local data_1, _ = num_into_u32(num)
-
-		data_1 = bit_and(data_1, 0xFF)
-
-		if data_1 >= 0x80 then
-			local temp = num_from_u32(-data_1 + 0x100, 0)
-
-			return num_negate(temp)
-		else
-			return num_from_u32(data_1, 0)
-		end
-	end
-
-	function extend.i64_n16(num)
-		local data_1, _ = num_into_u32(num)
-
-		data_1 = bit_and(data_1, 0xFFFF)
-
-		if data_1 >= 0x8000 then
-			local temp = num_from_u32(-data_1 + 0x10000, 0)
-
-			return num_negate(temp)
-		else
-			return num_from_u32(data_1, 0)
-		end
-	end
-
-	function extend.i64_n32(num)
-		local data_1, _ = num_into_u32(num)
-
-		if data_1 >= 0x80000000 then
-			local temp = num_from_u32(-data_1 + 0x100000000, 0)
-
-			return num_negate(temp)
-		else
-			return num_from_u32(data_1, 0)
-		end
-	end
-
-	function extend.i64_i32(num)
-		if num >= 0x80000000 then
-			local temp = num_from_u32(-num + 0x100000000, 0)
-
-			return num_negate(temp)
-		else
-			return num_from_u32(num, 0)
-		end
-	end
-
-	function extend.i64_u32(num)
-		return num_from_u32(num, 0)
-	end
-
-	convert.f32_i32 = to_i32
-	convert.f32_u32 = no_op
-
-	function convert.f32_i64(num)
-		if num_is_negative(num) then
-			local temp = num_negate(num)
-
-			return -num_into_u64(temp)
-		else
-			return num_into_u64(num)
-		end
-	end
-
-	convert.f32_u64 = num_into_u64
-	convert.f64_i32 = to_i32
-	convert.f64_u32 = no_op
-	convert.f64_i64 = convert.f32_i64
-	convert.f64_u64 = num_into_u64
-
-	demote.f32_f64 = no_op
-
-	promote.f64_f32 = no_op
-
-	function reinterpret.i32_f32(num)
-		local packed = string_pack("f", num)
-
-		return string_unpack("I4", packed)
-	end
-
-	function reinterpret.i64_f64(num)
-		local packed = string_pack("d", num)
-		local data_1, data_2 = string_unpack("I4I4", packed)
-
-		return num_from_u32(data_1, data_2)
-	end
-
-	function reinterpret.f32_i32(num)
-		local packed = string_pack("I4", num)
-
-		return string_unpack("f", packed)
-	end
-
-	function reinterpret.f64_i64(num)
-		local data_1, data_2 = num_into_u32(num)
-		local packed = string_pack("I4I4", data_1, data_2)
-
-		return string_unpack("d", packed)
-	end
-
-	module.wrap = wrap
-	module.truncate = truncate
-	module.saturate = saturate
-	module.extend = extend
-	module.convert = convert
-	module.demote = demote
-	module.promote = promote
-	module.reinterpret = reinterpret
-end
-
-do
-	local load = {}
-	local store = {}
-	local allocator = {}
-
-	local bit_extract = bit32.extract
-	local bit_replace = bit32.replace
-
-	local math_floor = math.floor
-
-	local string_byte = string.byte
-	local string_char = string.char
-	local string_unpack = string.unpack
-
-	local reinterpret_f32_i32 = module.reinterpret.f32_i32
-	local reinterpret_f64_i64 = module.reinterpret.f64_i64
-	local reinterpret_i32_f32 = module.reinterpret.i32_f32
-	local reinterpret_i64_f64 = module.reinterpret.i64_f64
-
-	local function load_byte(data, addr)
-		local value = data[math_floor(addr / 4)] or 0
-
-		return bit_extract(value, addr % 4 * 8, 8)
-	end
-
-	local function store_byte(data, addr, value)
-		local adjust = math_floor(addr / 4)
-
-		data[adjust] = bit_replace(data[adjust] or 0, value, addr % 4 * 8, 8)
-	end
-
-	function load.i32_i8(memory, addr)
-		local temp = load_byte(memory.data, addr)
-
-		if temp >= 0x80 then
-			return to_u32(temp - 0x100)
-		else
-			return temp
-		end
-	end
-
-	function load.i32_u8(memory, addr)
-		return load_byte(memory.data, addr)
-	end
-
-	function load.i32_i16(memory, addr)
-		local data = memory.data
-		local temp
-
-		if addr % 4 == 0 then
-			temp = bit_and(data[addr / 4] or 0, 0xFFFF)
-		else
-			local b1 = load_byte(data, addr)
-			local b2 = bit_lshift(load_byte(data, addr + 1), 8)
-
-			temp = bit_or(b1, b2)
-		end
-
-		if temp >= 0x8000 then
-			return to_u32(temp - 0x10000)
-		else
-			return temp
-		end
-	end
-
-	function load.i32_u16(memory, addr)
-		local data = memory.data
-
-		if addr % 4 == 0 then
-			return bit_and(data[addr / 4] or 0, 0xFFFF)
-		else
-			local b1 = load_byte(data, addr)
-			local b2 = bit_lshift(load_byte(data, addr + 1), 8)
-
-			return bit_or(b1, b2)
-		end
-	end
-
-	function load.i32(memory, addr)
-		local data = memory.data
-
-		if addr % 4 == 0 then
-			-- aligned read
-			return data[addr / 4] or 0
-		else
-			-- unaligned read
-			local b1 = load_byte(data, addr)
-			local b2 = bit_lshift(load_byte(data, addr + 1), 8)
-			local b3 = bit_lshift(load_byte(data, addr + 2), 16)
-			local b4 = bit_lshift(load_byte(data, addr + 3), 24)
-
-			return bit_or(b1, b2, b3, b4)
-		end
-	end
-
-	function load.i64_i8(memory, addr)
-		local data_1 = load_byte(memory.data, addr)
-		local data_2
-
-		if data_1 >= 0x80 then
-			data_1 = to_u32(data_1 - 0x100)
-			data_2 = 0xFFFFFFFF
-		else
-			data_2 = 0
-		end
-
-		return num_from_u32(data_1, data_2)
-	end
-
-	function load.i64_u8(memory, addr)
-		local temp = load_byte(memory.data, addr)
-
-		return num_from_u32(temp, 0)
-	end
-
-	function load.i64_i16(memory, addr)
-		local data = memory.data
-		local data_1, data_2
-
-		if addr % 4 == 0 then
-			data_1 = bit_and(data[addr / 4] or 0, 0xFFFF)
-		else
-			local b1 = load_byte(data, addr)
-			local b2 = bit_lshift(load_byte(data, addr + 1), 8)
-
-			data_1 = bit_or(b1, b2)
-		end
-
-		if data_1 >= 0x8000 then
-			data_1 = to_u32(data_1 - 0x10000)
-			data_2 = 0xFFFFFFFF
-		else
-			data_2 = 0
-		end
-
-		return num_from_u32(data_1, data_2)
-	end
-
-	function load.i64_u16(memory, addr)
-		local data = memory.data
-		local temp
-
-		if addr % 4 == 0 then
-			temp = bit_and(data[addr / 4] or 0, 0xFFFF)
-		else
-			local b1 = load_byte(data, addr)
-			local b2 = bit_lshift(load_byte(data, addr + 1), 8)
-
-			temp = bit_or(b1, b2)
-		end
-
-		return num_from_u32(temp, 0)
-	end
-
-	function load.i64_i32(memory, addr)
-		local data = memory.data
-		local data_1, data_2
-
-		if addr % 4 == 0 then
-			data_1 = data[addr / 4] or 0
-		else
-			local b1 = load_byte(data, addr)
-			local b2 = bit_lshift(load_byte(data, addr + 1), 8)
-			local b3 = bit_lshift(load_byte(data, addr + 2), 16)
-			local b4 = bit_lshift(load_byte(data, addr + 3), 24)
-
-			data_1 = bit_or(b1, b2, b3, b4)
-		end
-
-		if data_1 >= 0x80000000 then
-			data_1 = to_u32(data_1 - 0x100000000)
-			data_2 = 0xFFFFFFFF
-		else
-			data_2 = 0
-		end
-
-		return num_from_u32(data_1, data_2)
-	end
-
-	function load.i64_u32(memory, addr)
-		local data = memory.data
-		local temp
-
-		if addr % 4 == 0 then
-			temp = data[addr / 4] or 0
-		else
-			local b1 = load_byte(data, addr)
-			local b2 = bit_lshift(load_byte(data, addr + 1), 8)
-			local b3 = bit_lshift(load_byte(data, addr + 2), 16)
-			local b4 = bit_lshift(load_byte(data, addr + 3), 24)
-
-			temp = bit_or(b1, b2, b3, b4)
-		end
-
-		return num_from_u32(temp, 0)
-	end
-
-	local load_i32 = load.i32
-
-	function load.i64(memory, addr)
-		local data_1 = load_i32(memory, addr)
-		local data_2 = load_i32(memory, addr + 4)
-
-		return num_from_u32(data_1, data_2)
-	end
-
-	local load_i64 = load.i64
-
-	function load.f32(memory, addr)
-		local raw = load_i32(memory, addr)
-
-		return reinterpret_f32_i32(raw)
-	end
-
-	function load.f64(memory, addr)
-		local raw = load_i64(memory, addr)
-
-		return reinterpret_f64_i64(raw)
-	end
-
-	function load.string(memory, addr, len)
-		local buffer = table.create(len)
-		local data = memory.data
-
-		for i = 1, len do
-			local raw = load_byte(data, addr + i - 1)
-
-			buffer[i] = string_char(raw)
-		end
-
-		return table.concat(buffer)
-	end
-
-	function store.i32_n8(memory, addr, value)
-		store_byte(memory.data, addr, value)
-	end
-
-	local store_i8 = store.i32_n8
-
-	function store.i32_n16(memory, addr, value)
-		store_byte(memory.data, addr, value)
-		store_byte(memory.data, addr + 1, bit_rshift(value, 8))
-	end
-
-	function store.i32(memory, addr, value)
-		local data = memory.data
-
-		if addr % 4 == 0 then
-			-- aligned write
-			data[addr / 4] = value
-		else
-			-- unaligned write
-			store_byte(data, addr, value)
-			store_byte(data, addr + 1, bit_rshift(value, 8))
-			store_byte(data, addr + 2, bit_rshift(value, 16))
-			store_byte(data, addr + 3, bit_rshift(value, 24))
-		end
-	end
-
-	local store_i32 = store.i32
-	local store_i32_n8 = store.i32_n8
-	local store_i32_n16 = store.i32_n16
-
-	function store.i64_n8(memory, addr, value)
-		local data_1, _ = num_into_u32(value)
-
-		store_i32_n8(memory, addr, data_1)
-	end
-
-	function store.i64_n16(memory, addr, value)
-		local data_1, _ = num_into_u32(value)
-
-		store_i32_n16(memory, addr, data_1)
-	end
-
-	function store.i64_n32(memory, addr, value)
-		local data_1, _ = num_into_u32(value)
-
-		store_i32(memory, addr, data_1)
-	end
-
-	function store.i64(memory, addr, value)
-		local data_1, data_2 = num_into_u32(value)
-
-		store_i32(memory, addr, data_1)
-		store_i32(memory, addr + 4, data_2)
-	end
-
-	local store_i64 = store.i64
-
-	function store.f32(memory, addr, value)
-		store_i32(memory, addr, reinterpret_i32_f32(value))
-	end
-
-	function store.f64(memory, addr, value)
-		store_i64(memory, addr, reinterpret_i64_f64(value))
-	end
-
-	function store.string(memory, addr, data, len)
-		len = len or #data
-
-		local rem = len % 4
-
-		for i = 1, len - rem, 4 do
-			local v = string_unpack("<I4", data, i)
-
-			store_i32(memory, addr + i - 1, v)
-		end
-
-		for i = len - rem + 1, len do
-			local v = string_byte(data, i)
-
-			store_i8(memory, addr + i - 1, v)
-		end
-	end
-
-	function allocator.new(min, max)
-		return { min = min, max = max, data = {} }
-	end
-
-	function allocator.grow(memory, num)
-		local old = memory.min
-		local new = old + num
-
-		if new > memory.max then
-			return to_u32(-1)
-		else
-			memory.min = new
-
-			return old
-		end
-	end
-
-	module.load = load
-	module.store = store
-	module.allocator = allocator
-end
-
-return module
-
-end)()
