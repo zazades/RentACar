@@ -4,10 +4,6 @@ return {
     886391387, -- Demir
     2354190429, -- Demir
     490673627, -- facts
-    4409081536, -- Umut
-    1588038626, -- kemal
-    7534373430, -- kemal
-    2056309920, -- sadmert
     1019237285, -- Cüneyt
     1019237285, -- Cüneyt
     3518900999,  -- aspect
@@ -25,7 +21,6 @@ return {
     1123663422, -- darknight
     6136358806,  -- Berathasan
     6139520803,  -- Berathasan
-    4414924719,  -- salakyusuf
     2207639725,  -- azat
     688127505    -- azat
 }
