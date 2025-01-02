@@ -1,10 +1,8 @@
 return {
-    7671431933, -- osveta
     490673627, -- facts
+    9096970, -- facts
     1019237285, -- Cüneyt
     1019237285, -- Cüneyt
-    6136358806,  -- Berathasan
-    6139520803,  -- Berathasan
     3518900999,  -- aspect
     5688820880, -- aspect
     6132046203, -- aspect
@@ -19,12 +17,6 @@ return {
     1477825117,  -- darknight
     1123663422, -- darknight
     2207639725,  -- azat
-    886391387, -- demir 
-    2354190429, -- demir
-    3222980997, -- kaizen
-    6197883785, -- polat
-    5329023644, -- onur
-    9096970, -- facts
     4414924719, -- yusufsalak
     688127505    -- azat
 }
