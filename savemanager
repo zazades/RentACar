@@ -143,6 +143,7 @@ local SaveManager = {} do
         if not success then return false, "decode error" end
 
         for _, option in next, decoded.objects do
+            task.wait(0.001)
             if self.Parser[option.type] then
                 task.spawn(function() self.Parser[option.type].Load(option.idx, option) end)
             end
