@@ -79,8 +79,8 @@ local SaveManager = {} do
             end,
             Load = function(idx, data)
                 if SaveManager.Options[idx] then
-                    -- Create a new part at the saved position
-                    local part = Instance.new("Part", workspace)
+                    task.wait(0.001)
+                    local part = Instance.new("Part", game.Workspace.PointsFolder)
                     part.CFrame = CFrame.new(data.position)
                     part.Anchored = true
                     part.CanCollide = false
