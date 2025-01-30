@@ -12,7 +12,6 @@ return {
     5688820880, -- aspect
     6132046203, -- aspect
     1019237285, -- Cüneyt
-    1019237285, -- Cüneyt
     1477825117, -- darknight
     1123663422, -- darknight
     7903170113, -- dionosis
@@ -32,7 +31,7 @@ return {
     5373580474, -- travis
     7343024333, -- that guy
     7358316801, -- that guy
-    490673627, -- facts
-    9096970, -- facts
-    4369954788 -- yusuf
+    490673627,  -- facts
+    9096970,    -- facts
+    4369954788  -- yusuf
 }
