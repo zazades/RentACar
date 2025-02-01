@@ -1,6 +1,7 @@
 local httpService = game:GetService("HttpService")
 
-local SaveManager = {} do
+local SaveManager = {}
+do
     SaveManager.Folder = "FluentSettings"
     SaveManager.Ignore = {}
     SaveManager.Parser = {
@@ -72,20 +73,25 @@ local SaveManager = {} do
                 end
             end,
         },
-        -- Added position parser to save/load positions
+        -- Modified Position Parser
         Position = {
             Save = function(idx, object)
+                -- Note: This is used only when saving UI elements.
                 return { type = "Position", idx = idx, position = object.CFrame.Position }
             end,
             Load = function(idx, data)
-                if SaveManager.Options[idx] then
-                    task.wait(0.001)
-                    local part = Instance.new("Part", game.Workspace.PointsFolder)
-                    part.CFrame = CFrame.new(data.position)
-                    part.Anchored = true
-                    part.CanCollide = false
-                    part.Size = Vector3.new(2, 2, 2)
+                -- Always create a part even if there's no matching UI element.
+                task.wait(0.001)
+                local folder = game.Workspace:FindFirstChild("PointsFolder")
+                if not folder then
+                    folder = Instance.new("Folder", game.Workspace)
+                    folder.Name = "PointsFolder"
                 end
+                local part = Instance.new("Part", folder)
+                part.CFrame = CFrame.new(data.position.x, data.position.y, data.position.z)
+                part.Anchored = true
+                part.CanCollide = false
+                part.Size = Vector3.new(2, 2, 2)
             end,
         },
     }
@@ -112,13 +118,25 @@ local SaveManager = {} do
             objects = {}
         }
 
-        -- Save positions (CFrames) and other properties
+        -- Save UI options using the parsers.
         for idx, option in next, SaveManager.Options do
             if not self.Parser[option.Type] then continue end
             if self.Ignore[idx] then continue end
 
             table.insert(data.objects, self.Parser[option.Type].Save(idx, option))
         end
+
+        -- <<<< NEW CODE: Save positions from global values1 >>>>
+        if values1 and #values1 > 0 then
+            for i, cf in ipairs(values1) do
+                table.insert(data.objects, {
+                    type = "Position",
+                    idx = "Position_" .. i,
+                    position = { x = cf.Position.X, y = cf.Position.Y, z = cf.Position.Z }
+                })
+            end
+        end
+        -- <<<< END NEW CODE >>>>
 
         local success, encoded = pcall(httpService.JSONEncode, httpService, data)
         if not success then
@@ -139,7 +157,7 @@ local SaveManager = {} do
 
         local jsonData = readfile(file)
 
-        local success, decoded = pcall(httpService.JSONDecode, httpService, readfile(file))
+        local success, decoded = pcall(httpService.JSONDecode, httpService, jsonData)
         if not success then return false, "decode error" end
 
         for _, option in next, decoded.objects do
