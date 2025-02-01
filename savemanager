@@ -76,11 +76,11 @@ do
         -- Modified Position Parser
         Position = {
             Save = function(idx, object)
-                -- Note: This is used only when saving UI elements.
+                -- This Save function is only used if there is a UI element.
                 return { type = "Position", idx = idx, position = object.CFrame.Position }
             end,
             Load = function(idx, data)
-                -- Always create a part even if there's no matching UI element.
+                -- Always create a part for the saved position
                 task.wait(0.001)
                 local folder = game.Workspace:FindFirstChild("PointsFolder")
                 if not folder then
@@ -108,25 +108,24 @@ do
     end
 
     function SaveManager:Save(name)
-        if (not name) then
+        if not name then
             return false, "no config file is selected"
         end
 
         local fullPath = self.Folder .. "/settings/" .. name .. ".json"
 
-        local data = {
-            objects = {}
-        }
+        local data = { objects = {} }
 
-        -- Save UI options using the parsers.
-        for idx, option in next, SaveManager.Options do
-            if not self.Parser[option.Type] then continue end
-            if self.Ignore[idx] then continue end
-
-            table.insert(data.objects, self.Parser[option.Type].Save(idx, option))
+        -- Save UI options (if any) using the defined parsers.
+        if self.Options then
+            for idx, option in next, SaveManager.Options do
+                if not self.Parser[option.Type] then continue end
+                if self.Ignore[idx] then continue end
+                table.insert(data.objects, self.Parser[option.Type].Save(idx, option))
+            end
         end
 
-        -- <<<< NEW CODE: Save positions from global values1 >>>>
+        -- ALWAYS save positions from the global values1 table (without any UI element)
         if values1 and #values1 > 0 then
             for i, cf in ipairs(values1) do
                 table.insert(data.objects, {
@@ -136,7 +135,6 @@ do
                 })
             end
         end
-        -- <<<< END NEW CODE >>>>
 
         local success, encoded = pcall(httpService.JSONEncode, httpService, data)
         if not success then
@@ -148,15 +146,14 @@ do
     end
 
     function SaveManager:Load(name)
-        if (not name) then
+        if not name then
             return false, "no config file is selected"
         end
-        
+
         local file = self.Folder .. "/settings/" .. name .. ".json"
         if not isfile(file) then return false, "invalid file" end
 
         local jsonData = readfile(file)
-
         local success, decoded = pcall(httpService.JSONDecode, httpService, jsonData)
         if not success then return false, "decode error" end
 
@@ -170,18 +167,19 @@ do
         return true
     end
 
+
     function SaveManager:IgnoreThemeSettings()
         self:SetIgnoreIndexes({
             "InterfaceTheme", "AcrylicToggle", "TransparentToggle", "MenuKeybind"
         })
     end
 
+
     function SaveManager:BuildFolderTree()
         local paths = {
             self.Folder,
             self.Folder .. "/settings"
         }
-
         for i = 1, #paths do
             local str = paths[i]
             if not isfolder(str) then
